@@ -1,8 +1,14 @@
 # Framework hook setup (Track 3)
 
-Each framework calls `agenttrace-ingest <adapter>` on stdin JSON per lifecycle
-event. The CLI maps it to `TraceEvent`s and POSTs to the collector; it always
-exits 0 and times out emit after 3s, so it can never block the host tool.
+Each framework pipes stdin JSON per lifecycle event into
+`node --import tsx <repo>/packages/adapters/src/cli.ts <adapter>` (the
+`agenttrace-ingest` bin alias points at a `.ts` file — plain `node` can't
+execute it; always invoke via `--import tsx`). The CLI maps it to
+`TraceEvent`s and POSTs to the collector; it always exits 0 and times out
+emit after 3s, so it can never block the host tool.
+
+Hook commands run with the session cwd — run codex from the repo root (the
+registered paths are relative), or substitute absolute paths.
 
 Raw payloads are always dumped to `demo/hook-dumps/` (override with
 `AGENTTRACE_HOOK_DUMP`, disable with `AGENTTRACE_HOOK_DUMP=off`) — dumps are

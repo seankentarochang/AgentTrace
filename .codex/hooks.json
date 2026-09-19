@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "node --import tsx packages/adapters/src/cli.ts codex",
-            "timeout": 3
+            "timeout": 5
           }
         ]
       }

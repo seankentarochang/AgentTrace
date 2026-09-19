@@ -20,6 +20,8 @@ export function Assistant({ traceId }: Props) {
     setResponse(undefined);
     try {
       setResponse(await askAssistant(question, traceId));
+    } catch {
+      setResponse({ answer: "assistant unreachable", functionsCalled: [] });
     } finally {
       setBusy(false);
     }

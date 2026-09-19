@@ -32,7 +32,7 @@ npm run demo                # spawns 2 agents + 2 proxies + coordinator
 ```
 
 Env: copy `.env.example` → `.env`. `GEMINI_API_KEY` enables the assistant;
-unset = `/v1/assistant` returns 501 and everything else still works.
+unset = `/v1/assistant` answers from the deterministic mock (never 501s on missing key).
 
 ## Invariants — do not break
 

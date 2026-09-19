@@ -47,7 +47,9 @@ export function App() {
         <Timeline state={state} onSelect={setSelectedEventId} />
       </div>
 
-      <Assistant traceId={state.traceId} />
+      {/* Fixture traces live only in the browser — the collector can't
+          answer questions about them, so the bar stays disabled. */}
+      <Assistant traceId={useFixture ? undefined : state.traceId} />
     </div>
   );
 }

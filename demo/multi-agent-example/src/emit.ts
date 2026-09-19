@@ -19,6 +19,8 @@ export async function emit(event: TraceEvent): Promise<void> {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ event: stamped }),
+      // A wedged-but-accepting collector must not stall the agent's reply.
+      signal: AbortSignal.timeout(3000),
     });
   } catch {
     // Demo agents must run even with the collector down.

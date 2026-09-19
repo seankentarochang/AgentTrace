@@ -135,16 +135,33 @@ app.all("/*", async (request, reply) => {
     payload: { method: json?.method ?? request.method, params: params ?? json },
   });
 
-  // 2. Forward unchanged.
+  // 2. Forward unchanged — inbound headers pass through except hop-by-hop
+  // and the x-target-agent-* control headers; the proxy injects the caller
+  // identity headers itself.
+  const FWD_STRIP = new Set([
+    "host",
+    "content-length",
+    "connection",
+    "keep-alive",
+    "te",
+    "trailer",
+    "upgrade",
+    "x-target-agent-id",
+    "x-target-agent-name",
+  ]);
+  const fwdHeaders: Record<string, string> = {};
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (FWD_STRIP.has(key.toLowerCase()) || value === undefined) continue;
+    fwdHeaders[key] = Array.isArray(value) ? value.join(", ") : String(value);
+  }
+  fwdHeaders["x-agent-id"] = caller.id;
+  fwdHeaders["x-agent-name"] = caller.name;
+
   let upstream: Response;
   try {
     upstream = await fetch(`${TARGET}${request.url}`, {
       method: request.method,
-      headers: {
-        "content-type": request.headers["content-type"] ?? "application/json",
-        "x-agent-id": caller.id,
-        "x-agent-name": caller.name,
-      },
+      headers: fwdHeaders,
       body: request.method === "GET" || request.method === "HEAD" ? undefined : body,
     });
   } catch {

@@ -42,6 +42,17 @@ const killChildren = () => {
 };
 process.on("SIGINT", killChildren);
 process.on("SIGTERM", killChildren);
+// Startup failure (waitFor throw, spawn error) exits the process without a
+// signal — sweep children on any exit so ports never leak.
+process.on("exit", () => {
+  for (const c of children) {
+    try {
+      c.kill();
+    } catch {
+      // already gone
+    }
+  }
+});
 
 function spawnTsx(file: string, env: Record<string, string>, label: string) {
   const child = spawn(process.execPath, ["--import", "tsx", file], {

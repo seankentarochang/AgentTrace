@@ -54,6 +54,8 @@ async function send(
       "x-target-agent-name": target.name,
     },
     body: JSON.stringify(request),
+    // A hung upstream must not stall a --repeat loop forever.
+    signal: AbortSignal.timeout(15_000),
   });
   return (await res.json()) as A2AResponse;
 }
@@ -92,7 +94,9 @@ export async function runCoordinator(): Promise<string> {
   console.log("researcher:", JSON.stringify(research.result?.status ?? research));
   console.log("reviewer: ", JSON.stringify(review.result?.status ?? review));
 
-  const failed = review?.result?.status?.state === "failed";
+  // A proxy 502 returns {error} — result.status is absent. Treat a missing
+  // task result as failed rather than reporting success over a dead agent.
+  const failed = !review?.result?.status || review.result.status.state === "failed";
   await emit({
     schemaVersion: 1,
     eventId: eventId(),

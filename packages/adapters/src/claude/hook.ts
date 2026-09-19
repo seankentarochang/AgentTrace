@@ -19,6 +19,11 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function validTimestamp(value: unknown): string | undefined {
+  const ts = str(value);
+  return ts && !Number.isNaN(Date.parse(ts)) ? ts : undefined;
+}
+
 const MAIN: EntityRef = {
   id: "agent_claude_main",
   kind: "agent",
@@ -43,7 +48,8 @@ function base(payload: HookPayload) {
     schemaVersion: 1 as const,
     eventId: nextEventId(),
     traceId: str(payload.session_id) ?? "trace_claude_unknown",
-    timestamp: str(payload.timestamp) ?? new Date().toISOString(),
+    // A non-ISO hook timestamp would yield NaN in the reducer's span math.
+    timestamp: validTimestamp(payload.timestamp) ?? new Date().toISOString(),
     visibility: "structured_event" as const,
     provider: {
       ...PROVIDER,
