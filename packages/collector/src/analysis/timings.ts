@@ -18,24 +18,53 @@ export interface CriticalPathEntry {
 
 /**
  * Parent of each span, from explicit IDs only (invariant 5):
- * - a tool span belongs to the owning agent's span that was open when it started;
- * - an agent span started under task X belongs to whichever agent sent the
- *   agent_message carrying correlationId X (the delegation).
+ * - parentEventId links directly to the span opened by that event, or to the
+ *   agent span containing a non-span event such as a delegation message;
+ * - correlationId links a delegated agent span to the observed sender;
+ * - a tool span falls back to its explicit owner agent when no parent event
+ *   was captured.
  * Anything else is a root.
  */
 function parentOf(span: Span, state: TraceState): Span | undefined {
   const start = Date.parse(span.startTime);
-  const openAgentSpan = (agentId: string) =>
-    state.spans.find(
-      (s) =>
-        s !== span &&
-        s.kind === "agent" &&
-        s.entityId === agentId &&
-        Date.parse(s.startTime) <= start &&
-        (!s.endTime || Date.parse(s.endTime) >= start),
-    );
+  const containingAgentSpan = (agentId: string, at: number) =>
+    state.spans
+      .filter(
+        (candidate) =>
+          candidate !== span &&
+          candidate.kind === "agent" &&
+          candidate.entityId === agentId &&
+          Date.parse(candidate.startTime) <= at &&
+          (!candidate.endTime || Date.parse(candidate.endTime) >= at),
+      )
+      .sort(
+        (a, b) =>
+          Date.parse(b.startTime) - Date.parse(a.startTime) ||
+          a.id.localeCompare(b.id),
+      )[0];
 
-  if (span.kind === "tool") return openAgentSpan(span.ownerId);
+  if (span.parentEventId) {
+    const directParent = state.spans.find(
+      (candidate) =>
+        candidate !== span &&
+        (candidate.startEventId === span.parentEventId ||
+          candidate.endEventId === span.parentEventId) &&
+        Date.parse(candidate.startTime) <= start,
+    );
+    if (directParent) return directParent;
+
+    const parentEvent = state.events.find(
+      (event) => event.eventId === span.parentEventId,
+    );
+    if (parentEvent) {
+      const containing = containingAgentSpan(
+        parentEvent.source.id,
+        Date.parse(parentEvent.timestamp),
+      );
+      if (containing) return containing;
+    }
+  }
+
   if (span.kind === "agent" && span.correlationId) {
     const delegation = state.events.find(
       (e) =>
@@ -44,15 +73,22 @@ function parentOf(span: Span, state: TraceState): Span | undefined {
         e.destination?.id === span.entityId &&
         e.source.id !== span.entityId,
     );
-    if (delegation) return openAgentSpan(delegation.source.id);
+    if (delegation) {
+      return containingAgentSpan(
+        delegation.source.id,
+        Date.parse(delegation.timestamp),
+      );
+    }
   }
+  if (span.kind === "tool") return containingAgentSpan(span.ownerId, start);
   return undefined;
 }
 
 /**
- * Critical path over the span tree: start at the root that ends last, then
- * repeatedly descend into the child that ends last before the current cursor
- * (the classic "what was the parent actually waiting on" walk).
+ * Critical path over the explicit span dependency forest: start at the root
+ * that ends last, then repeatedly descend into its latest-ending child. Only
+ * one child is selected at each branch; siblings are not treated as causally
+ * dependent on one another.
  * Unfinished spans are treated as running until the end of the trace.
  */
 export function getCriticalPath(state: TraceState): {
@@ -61,7 +97,10 @@ export function getCriticalPath(state: TraceState): {
 } {
   const traceEnd = state.metrics.endedAt ? Date.parse(state.metrics.endedAt) : 0;
   const end = (s: Span) => (s.endTime ? Date.parse(s.endTime) : traceEnd);
-  const byEndDesc = (a: Span, b: Span) => end(b) - end(a);
+  const byEndDesc = (a: Span, b: Span) =>
+    end(b) - end(a) ||
+    Date.parse(a.startTime) - Date.parse(b.startTime) ||
+    a.id.localeCompare(b.id);
 
   const children = new Map<Span | undefined, Span[]>();
   for (const span of state.spans) {
@@ -70,17 +109,13 @@ export function getCriticalPath(state: TraceState): {
   }
 
   const path: Span[] = [];
-  const walk = (span: Span) => {
-    path.push(span);
-    let cursor = end(span);
-    for (const child of [...(children.get(span) ?? [])].sort(byEndDesc)) {
-      if (end(child) > cursor) continue;
-      walk(child);
-      cursor = Date.parse(child.startTime);
-    }
-  };
-  const root = [...(children.get(undefined) ?? [])].sort(byEndDesc)[0];
-  if (root) walk(root);
+  let current = [...(children.get(undefined) ?? [])].sort(byEndDesc)[0];
+  const visited = new Set<Span>();
+  while (current && !visited.has(current)) {
+    path.push(current);
+    visited.add(current);
+    current = [...(children.get(current) ?? [])].sort(byEndDesc)[0];
+  }
 
   return {
     total_ms: state.metrics.totalDurationMs ?? 0,

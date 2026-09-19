@@ -51,6 +51,8 @@ export interface Span {
   durationMs?: number;
   status: EventStatus;
   correlationId?: string;
+  /** Explicit causal parent from the event that opened this span. */
+  parentEventId?: string;
 }
 
 export interface AgentOverlap {
@@ -216,6 +218,7 @@ function openSpan(
     startTime: event.timestamp,
     status: "started",
     correlationId: event.correlationId,
+    parentEventId: event.parentEventId,
   });
 }
 
@@ -276,10 +279,11 @@ function spanEnd(span: Span, traceEnd: number): number {
 
 /** Max number of simultaneously open spans (sweep line). */
 function maxOverlap(spans: Span[], traceEnd: number): number {
-  const points = spans.flatMap((s) => [
-    { t: Date.parse(s.startTime), d: 1 },
-    { t: spanEnd(s, traceEnd), d: -1 },
-  ]);
+  const points = spans.flatMap((s) => {
+    const start = Date.parse(s.startTime);
+    const end = spanEnd(s, traceEnd);
+    return end > start ? [{ t: start, d: 1 }, { t: end, d: -1 }] : [];
+  });
   // Ends before starts at the same instant: touching spans don't overlap.
   points.sort((a, b) => a.t - b.t || a.d - b.d);
   let open = 0;
@@ -287,6 +291,31 @@ function maxOverlap(spans: Span[], traceEnd: number): number {
   for (const p of points) {
     open += p.d;
     max = Math.max(max, open);
+  }
+  return max;
+}
+
+/** Max number of distinct entities active at once, even with nested spans. */
+function maxDistinctEntityOverlap(spans: Span[], traceEnd: number): number {
+  const points = spans.flatMap((span) => {
+    const start = Date.parse(span.startTime);
+    const end = spanEnd(span, traceEnd);
+    return end > start
+      ? [
+          { t: start, d: 1, entityId: span.entityId },
+          { t: end, d: -1, entityId: span.entityId },
+        ]
+      : [];
+  });
+  points.sort((a, b) => a.t - b.t || a.d - b.d || a.entityId.localeCompare(b.entityId));
+
+  const activeSpansByEntity = new Map<string, number>();
+  let max = 0;
+  for (const point of points) {
+    const next = (activeSpansByEntity.get(point.entityId) ?? 0) + point.d;
+    if (next > 0) activeSpansByEntity.set(point.entityId, next);
+    else activeSpansByEntity.delete(point.entityId);
+    max = Math.max(max, activeSpansByEntity.size);
   }
   return max;
 }
@@ -336,7 +365,7 @@ export function computeConcurrency(state: TraceState): ConcurrencyMetrics {
   }
 
   return {
-    maxConcurrentAgents: maxOverlap(agents, traceEnd),
+    maxConcurrentAgents: maxDistinctEntityOverlap(agents, traceEnd),
     maxConcurrentToolCalls: maxOverlap(tools, traceEnd),
     overlappingAgents,
     idleIntervals,
