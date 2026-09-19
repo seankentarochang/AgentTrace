@@ -201,7 +201,7 @@ app.post("/v1/assistant", async (request, reply) => {
     return { answer: result.answer, functionsCalled: result.functionsCalled ?? [] };
   } catch (err) {
     request.log.warn(err);
-    return reply.code(501).send({ error: "assistant unavailable (Gemini not configured?)" });
+    return reply.code(501).send({ error: "assistant unavailable (no LLM key configured, or the provider call failed; see collector log)" });
   }
 });
 
