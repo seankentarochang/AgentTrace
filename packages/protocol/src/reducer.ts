@@ -74,7 +74,11 @@ export interface ConcurrencyMetrics {
   maxConcurrentAgents: number;
   maxConcurrentToolCalls: number;
   overlappingAgents: AgentOverlap[];
-  /** Gaps inside the trace window where no span of any kind was open. */
+  /**
+   * Trace-wide gaps where no span of any kind was open. A root session/agent
+   * span covers gaps beneath it; this does not measure an agent waiting on
+   * delegated work, which lifecycle events alone cannot establish.
+   */
   idleIntervals: IdleInterval[];
 }
 
@@ -277,18 +281,30 @@ function spanEnd(span: Span, traceEnd: number): number {
   return span.endTime ? Date.parse(span.endTime) : traceEnd;
 }
 
+/**
+ * Closed spans are [start, end), except zero-length spans count at their
+ * instant. Unfinished spans remain active at the last observed timestamp.
+ */
+function overlapPoints(spans: Span[], traceEnd: number) {
+  const points = spans.flatMap((span) => {
+    const start = Date.parse(span.startTime);
+    const end = spanEnd(span, traceEnd);
+    if (end < start) return [];
+    const points = [{ t: start, d: 1, order: 1, entityId: span.entityId }];
+    if (span.endTime) {
+      points.push({ t: end, d: -1, order: end === start ? 2 : 0, entityId: span.entityId });
+    }
+    return points;
+  });
+  // Regular ends, then all starts, then instantaneous ends at a timestamp.
+  return points.sort((a, b) => a.t - b.t || a.order - b.order);
+}
+
 /** Max number of simultaneously open spans (sweep line). */
 function maxOverlap(spans: Span[], traceEnd: number): number {
-  const points = spans.flatMap((s) => {
-    const start = Date.parse(s.startTime);
-    const end = spanEnd(s, traceEnd);
-    return end > start ? [{ t: start, d: 1 }, { t: end, d: -1 }] : [];
-  });
-  // Ends before starts at the same instant: touching spans don't overlap.
-  points.sort((a, b) => a.t - b.t || a.d - b.d);
   let open = 0;
   let max = 0;
-  for (const p of points) {
+  for (const p of overlapPoints(spans, traceEnd)) {
     open += p.d;
     max = Math.max(max, open);
   }
@@ -297,21 +313,9 @@ function maxOverlap(spans: Span[], traceEnd: number): number {
 
 /** Max number of distinct entities active at once, even with nested spans. */
 function maxDistinctEntityOverlap(spans: Span[], traceEnd: number): number {
-  const points = spans.flatMap((span) => {
-    const start = Date.parse(span.startTime);
-    const end = spanEnd(span, traceEnd);
-    return end > start
-      ? [
-          { t: start, d: 1, entityId: span.entityId },
-          { t: end, d: -1, entityId: span.entityId },
-        ]
-      : [];
-  });
-  points.sort((a, b) => a.t - b.t || a.d - b.d || a.entityId.localeCompare(b.entityId));
-
   const activeSpansByEntity = new Map<string, number>();
   let max = 0;
-  for (const point of points) {
+  for (const point of overlapPoints(spans, traceEnd)) {
     const next = (activeSpansByEntity.get(point.entityId) ?? 0) + point.d;
     if (next > 0) activeSpansByEntity.set(point.entityId, next);
     else activeSpansByEntity.delete(point.entityId);
@@ -448,7 +452,7 @@ export function applyEvent(state: TraceState, event: TraceEvent): TraceState {
 export function reduceEvents(events: TraceEvent[], traceId?: string): TraceState {
   const state = createTraceState(traceId);
   for (const event of [...events].sort(compareEvents)) applyEvent(state, event);
-  // ponytail: O(agents²) pair scan; fine for hand-sized traces.
+  // Performance: O(agent spans²) pair scan; fine for small traces.
   state.metrics.concurrency = computeConcurrency(state);
   return state;
 }

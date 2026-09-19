@@ -20,6 +20,7 @@
  * persist -> broadcast. No LLM participates.
  */
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import Fastify from "fastify";
 import websocketPlugin from "@fastify/websocket";
 import {
@@ -45,7 +46,7 @@ const PORT = Number(process.env.COLLECTOR_PORT ?? 8787);
 const DATA_DIR = process.env.AGENTTRACE_DATA_DIR; // unset => memory only
 const MAX_PAYLOAD_BYTES = Number(process.env.AGENTTRACE_MAX_PAYLOAD_BYTES ?? 64 * 1024);
 
-const app = Fastify({ logger: true });
+export const app = Fastify({ logger: true });
 await app.register(websocketPlugin);
 
 const store = new EventStore(DATA_DIR);
@@ -206,6 +207,13 @@ app.get("/v1/live", { websocket: true }, (socket) => {
 
 app.get("/v1/health", async () => ({ ok: true, clients: hub.size }));
 
+const seedTimers = new Set<ReturnType<typeof setTimeout>>();
+function cancelSeedReplay(): void {
+  for (const timer of seedTimers) clearTimeout(timer);
+  seedTimers.clear();
+}
+app.addHook("onClose", async () => cancelSeedReplay());
+
 /**
  * Replays the demo fixture as a fresh trace (new traceId/eventIds, timestamps
  * shifted to now) through the real ingest pipeline. `?realtime=1` paces the
@@ -213,7 +221,8 @@ app.get("/v1/health", async () => ({ ok: true, clients: hub.size }));
  */
 app.post("/v1/dev/seed", async (request, reply) => {
   const { realtime } = request.query as { realtime?: string };
-  const traceId = `trace_seed_${Date.now()}`;
+  const traceId = `trace_seed_${randomUUID()}`;
+  cancelSeedReplay();
   // The dashboard reduces every live event together; clear it so a second
   // seed doesn't merge into the first (same entity ids, new traceId).
   hub.broadcast({ kind: "reset" });
@@ -228,20 +237,34 @@ app.post("/v1/dev/seed", async (request, reply) => {
         ...e,
         traceId,
         eventId: `${traceId}_${e.eventId}`,
+        parentEventId: e.parentEventId ? `${traceId}_${e.parentEventId}` : undefined,
         timestamp: new Date(now + offset).toISOString(),
       },
     };
   });
 
   if (realtime === "1" || realtime === "true") {
-    for (const { offset, event } of events) setTimeout(() => ingest(event), offset);
+    for (const { offset, event } of events) {
+      const timer = setTimeout(() => {
+        seedTimers.delete(timer);
+        ingest(event);
+      }, offset);
+      seedTimers.add(timer);
+    }
     return reply.code(202).send({ traceId, scheduled: events.length });
   }
-  for (const { event } of events) ingest(event);
-  return reply.code(202).send({ traceId, accepted: events.length });
+  let accepted = 0;
+  for (const { event } of events) {
+    const result = ingest(event);
+    if (result.ok && !result.duplicate) accepted += 1;
+  }
+  return reply.code(202).send({ traceId, accepted });
 });
 
-app.listen({ port: PORT, host: "127.0.0.1" }).catch((err) => {
-  app.log.error(err);
-  process.exit(1);
-});
+// Importing the app allows HTTP regression checks without opening a port.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  app.listen({ port: PORT, host: "127.0.0.1" }).catch((err) => {
+    app.log.error(err);
+    process.exit(1);
+  });
+}

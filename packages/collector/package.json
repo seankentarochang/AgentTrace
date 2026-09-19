@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
-    "check": "tsx src/check.ts",
+    "check": "tsx src/check.ts && tsx src/check-review.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
