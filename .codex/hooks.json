@@ -1,0 +1,95 @@
+{
+  "description": "AgentTrace capture — feeds codex lifecycle hooks to the local collector. Non-managed hooks need one-time trust via /hooks, or run codex with --dangerously-bypass-hook-trust.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --import tsx packages/adapters/src/cli.ts codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --import tsx packages/adapters/src/cli.ts codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --import tsx packages/adapters/src/cli.ts codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --import tsx packages/adapters/src/cli.ts codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --import tsx packages/adapters/src/cli.ts codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --import tsx packages/adapters/src/cli.ts codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --import tsx packages/adapters/src/cli.ts codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --import tsx packages/adapters/src/cli.ts codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

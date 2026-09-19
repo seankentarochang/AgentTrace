@@ -1,17 +1,20 @@
 /**
  * Reviewer agent (spec §25 demo). Receives a task via the proxy, runs a
- * (simulated) shell test command that FAILS — the failure Gemini later
- * explains from deterministic data.
+ * (simulated) shell test command that FAILS at ~1.9s — the failure Gemini
+ * later explains from deterministic data.
  */
 import Fastify from "fastify";
 import { emit, eventId } from "../emit.js";
 
 const PORT = Number(process.env.REVIEWER_PORT ?? 9102);
+const SHELL_MS = Number(process.env.REVIEWER_SHELL_MS ?? 1500);
 const app = Fastify({ logger: true });
 
 const me = { id: "agent_reviewer", kind: "agent", name: "Reviewer" } as const;
 const shell = { id: "tool_shell", kind: "tool", name: "shell" } as const;
 const provider = { adapter: "custom", adapterVersion: "0.1" } as const;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 app.post("/a2a", async (request) => {
   const body = request.body as Record<string, unknown>;
@@ -33,6 +36,7 @@ app.post("/a2a", async (request) => {
     status: "started", correlationId: taskId,
   });
 
+  await sleep(320);
   const callId = eventId("call");
   await emit({
     ...base, eventId: eventId(), timestamp: new Date().toISOString(),
@@ -40,7 +44,7 @@ app.post("/a2a", async (request) => {
     status: "started", correlationId: callId,
     payload: { arguments: { command: "npm test -- auth" } },
   });
-  await new Promise((r) => setTimeout(r, 1500));
+  await sleep(SHELL_MS);
   await emit({
     ...base, eventId: eventId(), timestamp: new Date().toISOString(),
     source: shell, destination: me, category: "tool", type: "tool_result",
@@ -59,7 +63,7 @@ app.post("/a2a", async (request) => {
     id: body.id,
     result: {
       taskId,
-      status: { state: "failed" },
+      status: { state: "failed", timestamp: new Date().toISOString() },
       artifacts: [
         {
           artifactId: eventId("artifact"),

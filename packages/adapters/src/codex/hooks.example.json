@@ -1,0 +1,85 @@
+{
+  "description": "AgentTrace capture — forwards every Codex lifecycle hook to the local collector and dumps raw payloads.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx C:/Users/chang/dev/emberhacks/packages/adapters/src/cli.ts codex --dump=dumps"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx C:/Users/chang/dev/emberhacks/packages/adapters/src/cli.ts codex --dump=dumps"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx C:/Users/chang/dev/emberhacks/packages/adapters/src/cli.ts codex --dump=dumps"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx C:/Users/chang/dev/emberhacks/packages/adapters/src/cli.ts codex --dump=dumps"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx C:/Users/chang/dev/emberhacks/packages/adapters/src/cli.ts codex --dump=dumps"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx C:/Users/chang/dev/emberhacks/packages/adapters/src/cli.ts codex --dump=dumps"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx C:/Users/chang/dev/emberhacks/packages/adapters/src/cli.ts codex --dump=dumps"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx C:/Users/chang/dev/emberhacks/packages/adapters/src/cli.ts codex --dump=dumps"
+          }
+        ]
+      }
+    ]
+  }
+}

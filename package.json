@@ -16,6 +16,7 @@
     "dev:dashboard": "npm run dev -w @agenttrace/dashboard",
     "dev:a2a-proxy": "npm run dev:a2a -w @agenttrace/adapters",
     "demo": "npm run start -w @agenttrace/demo",
+    "check:parity": "tsx scripts/check-query-parity.ts",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {

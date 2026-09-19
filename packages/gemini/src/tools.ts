@@ -8,7 +8,6 @@
 import { Type, type FunctionDeclaration } from "@google/genai";
 
 const traceIdParam = {
-  name: "traceId",
   type: Type.STRING,
   description: "ID of the trace to query",
 };

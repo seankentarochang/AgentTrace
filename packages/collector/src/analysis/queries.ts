@@ -24,8 +24,14 @@ export function getTraceSummary(state: TraceState) {
 }
 
 export function getAgentActivity(state: TraceState, agentId: string) {
+  // Match on id OR name — getTraceSummary hands the model names, so a
+  // name-based query must not silently return empty.
   return state.events.filter(
-    (e) => e.source.id === agentId || e.destination?.id === agentId,
+    (e) =>
+      e.source.id === agentId ||
+      e.source.name === agentId ||
+      e.destination?.id === agentId ||
+      e.destination?.name === agentId,
   );
 }
 

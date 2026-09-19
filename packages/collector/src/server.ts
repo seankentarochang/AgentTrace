@@ -44,6 +44,11 @@ import { getEventsBefore, getEventsBetween } from "./analysis/timings.js";
 
 const PORT = Number(process.env.COLLECTOR_PORT ?? 8787);
 const DATA_DIR = process.env.AGENTTRACE_DATA_DIR; // unset => memory only
+
+// The gemini module runs inside this process and calls back over loopback —
+// default it to THIS port so a non-default COLLECTOR_PORT doesn't make the
+// assistant query a stale/foreign collector on :8787.
+process.env.AGENTTRACE_COLLECTOR_URL ??= `http://localhost:${PORT}`;
 const MAX_PAYLOAD_BYTES = Number(process.env.AGENTTRACE_MAX_PAYLOAD_BYTES ?? 64 * 1024);
 
 export const app = Fastify({ logger: true });
@@ -187,10 +192,13 @@ app.post("/v1/assistant", async (request, reply) => {
     // runtime, and invisible to this package's typecheck.
     const geminiModule = "@agenttrace/gemini";
     const { ask } = (await import(geminiModule)) as {
-      ask: (question: string, traceId: string) => Promise<string>;
+      ask: (
+        question: string,
+        traceId: string,
+      ) => Promise<{ answer: string; functionsCalled?: string[] }>;
     };
-    const answer = await ask(question, traceId);
-    return { answer };
+    const result = await ask(question, traceId);
+    return { answer: result.answer, functionsCalled: result.functionsCalled ?? [] };
   } catch (err) {
     request.log.warn(err);
     return reply.code(501).send({ error: "assistant unavailable (Gemini not configured?)" });

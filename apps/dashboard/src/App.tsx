@@ -128,7 +128,9 @@ export function App() {
         />
       </div>
 
-      <Assistant traceId={traceId} />
+      {/* Fixture/replay traces live only in the browser — the collector
+          can't answer questions about them, so the bar stays disabled. */}
+      <Assistant traceId={mode === "live" ? traceId : undefined} />
     </div>
   );
 }

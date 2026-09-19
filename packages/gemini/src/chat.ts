@@ -3,14 +3,16 @@
  * analysis layer — it picks functions, we execute them, it explains.
  * Its explanations never enter the canonical trace.
  *
- * TODO(track-3): validate structured output app-side (spec recommends
- * semantic validation even with schema-constrained output), tighten the
- * function-call loop, add tests against recorded responses.
+ * Without GEMINI_API_KEY, ask() delegates to the deterministic mockAsk
+ * (mock.ts) so the assistant endpoint never 501s during a demo.
+ *
+ * TODO(track-3): add tests against recorded Gemini responses.
  */
 import { GoogleGenAI, type Content, type Part } from "@google/genai";
 import { traceToolDeclarations } from "./tools.js";
 import { executeTraceFunction } from "./query.js";
 import { redactValue } from "./redact.js";
+import { mockAsk } from "./mock.js";
 
 const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 const MAX_TOOL_ROUNDS = 6;
@@ -21,9 +23,17 @@ Numbers, entities and events you report must come from function results — neve
 When you infer something beyond the raw data, label it clearly as inference.
 Keep answers short and specific.`;
 
-export async function ask(question: string, traceId: string): Promise<string> {
+export interface AssistantAnswer {
+  answer: string;
+  functionsCalled: string[];
+}
+
+export async function ask(
+  question: string,
+  traceId: string,
+): Promise<AssistantAnswer> {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
+  if (!apiKey) return mockAsk(question, traceId);
 
   const ai = new GoogleGenAI({ apiKey });
   const contents: Content[] = [
@@ -36,8 +46,11 @@ export async function ask(question: string, traceId: string): Promise<string> {
       ],
     },
   ];
+  const functionsCalled: string[] = [];
+  let lastText: string | undefined;
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+  try {
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const response = await ai.models.generateContent({
       model: MODEL,
       contents,
@@ -48,26 +61,46 @@ export async function ask(question: string, traceId: string): Promise<string> {
     });
 
     const calls = response.functionCalls ?? [];
+    if (response.text) lastText = response.text;
     if (calls.length === 0) {
-      return response.text ?? "(no answer)";
+      return { answer: response.text ?? "(no answer)", functionsCalled };
     }
 
-    // Record the model's turn, then answer every function call.
-    contents.push({ role: "model", parts: response.candidates?.[0]?.content?.parts ?? [] });
+    // Record the model's turn, then answer every function call in parallel.
+    contents.push({
+      role: "model",
+      parts: response.candidates?.[0]?.content?.parts ?? [],
+    });
 
-    const responseParts: Part[] = [];
-    for (const call of calls) {
-      const args = { traceId, ...(call.args ?? {}) } as Record<string, unknown>;
-      const result = await executeTraceFunction(call.name ?? "", args);
-      responseParts.push({
-        functionResponse: {
-          name: call.name,
-          response: { result: redactValue(result) },
-        },
-      });
-    }
+    const responseParts = await Promise.all(
+      calls.map(async (call): Promise<Part> => {
+        const name = call.name ?? "";
+        if (name && !functionsCalled.includes(name)) functionsCalled.push(name);
+        // The app controls traceId: spread model args first, then force ours —
+        // the model must not redirect queries to a different trace.
+        const args = { ...(call.args ?? {}), traceId } as Record<
+          string,
+          unknown
+        >;
+        const result = await executeTraceFunction(name, args);
+        return {
+          functionResponse: {
+            name: call.name,
+            response: { result: redactValue(result) },
+          },
+        };
+      }),
+    );
     contents.push({ role: "user", parts: responseParts });
   }
+  } catch {
+    // Any model-side failure (bad key, quota, malformed decls) falls back to
+    // the deterministic mock — the assistant endpoint must not 501 on it.
+    return mockAsk(question, traceId);
+  }
 
-  return "(query round limit reached)";
+  return {
+    answer: lastText ?? "(query round limit reached)",
+    functionsCalled,
+  };
 }

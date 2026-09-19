@@ -10,19 +10,30 @@
  * forwards them to the collector. Must exit 0 even on failure so the host
  * framework is never blocked by observability.
  *
- * Set AGENTTRACE_HOOK_DUMP to a directory to also write every raw payload
- * to <dir>/<adapter>-<timestamp>-<rand>.json — use it to capture real
- * payloads for fixing the mapper field names.
+ * Raw payloads are dumped to <dir>/<adapter>-<timestamp>-<rand>.json so the
+ * mappers can be verified against real payloads. Default dir is
+ * demo/hook-dumps/; override with --dump=<dir> or AGENTTRACE_HOOK_DUMP,
+ * disable with --dump=off.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { mapCodexHook } from "./codex/hook.js";
 import { mapClaudeHook } from "./claude/hook.js";
 import { emitEvent } from "./emit.js";
 
-const adapter = process.argv[2];
-const dumpDir = process.env.AGENTTRACE_HOOK_DUMP;
+const adapter = process.argv.slice(2).find((a) => !a.startsWith("--"));
+const defaultDumpDir = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../demo/hook-dumps",
+);
+const dumpFlag = process.argv.find((a) => a.startsWith("--dump="));
+const dumpTarget =
+  dumpFlag?.slice("--dump=".length) ??
+  process.env.AGENTTRACE_HOOK_DUMP ??
+  defaultDumpDir;
+const dumpDir = dumpTarget === "off" ? undefined : dumpTarget;
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
