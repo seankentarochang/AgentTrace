@@ -28,10 +28,96 @@ export interface AssistantAnswer {
   functionsCalled: string[];
 }
 
+/** Gemini's Type enum is uppercase ("STRING"); JSON Schema wants lowercase. */
+function toJsonSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(toJsonSchema);
+  if (!schema || typeof schema !== "object") return schema;
+  return Object.fromEntries(
+    Object.entries(schema).map(([k, v]) => [
+      k,
+      k === "type" && typeof v === "string" ? v.toLowerCase() : toJsonSchema(v),
+    ]),
+  );
+}
+
+interface OpenAIMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: { id: string; function: { name: string; arguments: string } }[];
+  tool_call_id?: string;
+}
+
+/** Same function-calling loop over OpenRouter's OpenAI-compatible API. */
+async function askOpenRouter(
+  question: string,
+  traceId: string,
+  apiKey: string,
+): Promise<AssistantAnswer> {
+  const model = process.env.OPENROUTER_MODEL ?? "deepseek/deepseek-v4.1-flash";
+  const tools = traceToolDeclarations.map((d) => ({
+    type: "function",
+    function: { name: d.name, description: d.description, parameters: toJsonSchema(d.parameters) },
+  }));
+  const messages: OpenAIMessage[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    { role: "user", content: `Trace ID: ${traceId}\n\nQuestion: ${question}` },
+  ];
+  const functionsCalled: string[] = [];
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ model, messages, tools }),
+    });
+    if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${await res.text()}`);
+    const data = (await res.json()) as { choices: { message: OpenAIMessage }[] };
+    const message = data.choices[0]!.message;
+    if (!message.tool_calls?.length) {
+      return { answer: message.content ?? "(no answer)", functionsCalled };
+    }
+
+    // Record the model's turn, then answer every function call.
+    messages.push(message);
+    for (const call of message.tool_calls) {
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = JSON.parse(call.function.arguments || "{}");
+      } catch {
+        // Malformed args: run with traceId only rather than abort the answer.
+      }
+      const name = call.function.name;
+      if (!functionsCalled.includes(name)) functionsCalled.push(name);
+      // App controls traceId: the model must not redirect to another trace.
+      const result = await executeTraceFunction(name, { ...parsed, traceId });
+      messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(redactValue(result)) });
+    }
+  }
+
+  return { answer: "(query round limit reached)", functionsCalled };
+}
+
 export async function ask(
   question: string,
   traceId: string,
 ): Promise<AssistantAnswer> {
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (openRouterKey) {
+    try {
+      return await askOpenRouter(question, traceId, openRouterKey);
+    } catch (err) {
+      // Never 501, but a key IS configured, so say the model didn't run
+      // rather than pass the rule-based answer off as the model's.
+      console.warn("[assistant] OpenRouter failed, using mock:", err);
+      const reason = err instanceof Error ? err.message.slice(0, 200) : String(err);
+      const fallback = await mockAsk(question, traceId);
+      return {
+        ...fallback,
+        answer: `> OpenRouter call failed (${reason}). Showing the rule-based answer instead.\n\n${fallback.answer}`,
+      };
+    }
+  }
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return mockAsk(question, traceId);
 
