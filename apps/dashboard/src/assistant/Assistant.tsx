@@ -47,8 +47,7 @@ export function Assistant({ traceId }: Props) {
           <div className="assistant-question">{asked}</div>
           {busy && (
             <div className="assistant-loading">
-              <span className="spinner" /> querying deterministic trace
-              functions…
+              <span className="spinner" /> thinking…
             </div>
           )}
           {result?.error && (
