@@ -1,43 +1,104 @@
 /**
- * Gemini NL query bar (spec §19 UI). Sends the question to the collector's
- * /v1/assistant route, which lazy-loads packages/gemini.
+ * Gemini NL query bar (spec §19 UI). The answer panel shows which
+ * deterministic query functions were called, so the viewer can see that the
+ * explanation came from observed data — the model never touches the trace.
  */
 import { useState } from "react";
-import { askAssistant } from "../lib/api";
+import { askAssistant, type AssistantResult } from "../lib/api";
 
 interface Props {
   traceId?: string;
 }
 
+const SUGGESTIONS = [
+  "Why did this run fail?",
+  "Which agents worked in parallel?",
+  "What was the slowest tool call?",
+];
+
 export function Assistant({ traceId }: Props) {
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<string>();
+  const [result, setResult] = useState<AssistantResult>();
+  const [asked, setAsked] = useState<string>();
   const [busy, setBusy] = useState(false);
 
-  async function submit() {
-    if (!question.trim() || !traceId) return;
+  async function submit(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed || !traceId || busy) return;
     setBusy(true);
-    setAnswer(undefined);
+    setAsked(trimmed);
+    setResult(undefined);
     try {
-      setAnswer(await askAssistant(question, traceId));
+      setResult(await askAssistant(trimmed, traceId));
+    } catch (err) {
+      setResult({ answer: "", error: String(err) });
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <>
-      {answer !== undefined && <div className="assistant-answer">{answer}</div>}
+    <div className="assistant">
+      {(busy || result) && (
+        <div className="assistant-answer">
+          <div className="assistant-question">{asked}</div>
+          {busy && (
+            <div className="assistant-loading">
+              <span className="spinner" /> querying deterministic trace
+              functions…
+            </div>
+          )}
+          {result?.error && (
+            <div className="assistant-error">{result.error}</div>
+          )}
+          {result?.answer && <div className="assistant-text">{result.answer}</div>}
+          {result?.functionsCalled && result.functionsCalled.length > 0 && (
+            <div className="assistant-provenance">
+              <span className="hint">answered from</span>
+              {result.functionsCalled.map((fn) => (
+                <span className="fn-chip" key={fn}>
+                  {fn}()
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="assistant-bar">
-        <span style={{ color: "var(--muted)" }}>Ask AgentTrace:</span>
+        <span className="assistant-prefix">Ask AgentTrace:</span>
         <input
           value={question}
-          placeholder={traceId ? "Why was this run slow?" : "start a trace first"}
+          placeholder={
+            traceId ? "Why was this run slow?" : "load or replay a trace first"
+          }
           disabled={!traceId || busy}
           onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
+          onKeyDown={(e) => e.key === "Enter" && submit(question)}
         />
+        <button
+          className="primary"
+          disabled={!traceId || busy || !question.trim()}
+          onClick={() => submit(question)}
+        >
+          {busy ? "asking…" : "ask"}
+        </button>
+        <div className="assistant-suggestions">
+          {SUGGESTIONS.map((s) => (
+            <button
+              key={s}
+              className="chip"
+              disabled={!traceId || busy}
+              onClick={() => {
+                setQuestion(s);
+                void submit(s);
+              }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
-    </>
+    </div>
   );
 }
