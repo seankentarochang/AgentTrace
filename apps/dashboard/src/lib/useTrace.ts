@@ -36,6 +36,14 @@ export interface TraceHandle {
 const REPLAY_SPEED = 1; // 1 = real fixture timing
 const MAX_BACKOFF_MS = 10_000;
 
+/** Union by eventId; the reducer sorts by timestamp, so order is free here. */
+function mergeEvents(a: TraceEvent[], b: TraceEvent[]): TraceEvent[] {
+  const byId = new Map<string, TraceEvent>();
+  for (const event of a) byId.set(event.eventId, event);
+  for (const event of b) byId.set(event.eventId, event);
+  return [...byId.values()];
+}
+
 export function useTrace(): TraceHandle {
   const [events, setEvents] = useState<TraceEvent[]>([]);
   const [traces, setTraces] = useState<TraceSummary[]>([]);
@@ -46,6 +54,12 @@ export function useTrace(): TraceHandle {
   const [replayNonce, setReplayNonce] = useState(0);
 
   const seen = useRef(new Set<string>());
+  /**
+   * Bumped whenever the visible event set is deliberately discarded (trace
+   * switch, reset). A snapshot that resolves against an older generation is
+   * stale and must not repopulate the list.
+   */
+  const generation = useRef(0);
   const traceIdRef = useRef<string | undefined>(undefined);
   traceIdRef.current = traceId;
 
@@ -65,19 +79,22 @@ export function useTrace(): TraceHandle {
   // Snapshot for the selected trace.
   useEffect(() => {
     if (!traceId) return;
-    let cancelled = false;
+    // Drop the previous trace's events up front, then merge the snapshot in
+    // rather than replacing: events that stream in over the WS while this
+    // fetch is in flight belong to the same trace and must survive it.
+    const gen = ++generation.current;
+    seen.current = new Set();
+    setEvents([]);
+
     getTrace(traceId)
       .then((detail) => {
-        if (cancelled) return;
-        seen.current = new Set(detail.events.map((e) => e.eventId));
-        setEvents(detail.events);
+        if (gen !== generation.current) return; // Superseded.
+        for (const event of detail.events) seen.current.add(event.eventId);
+        setEvents((prev) => mergeEvents(prev, detail.events));
       })
       .catch(() => {
-        if (!cancelled) setEvents([]);
+        // Collector unreachable — keep whatever the live stream has given us.
       });
-    return () => {
-      cancelled = true;
-    };
   }, [traceId]);
 
   // Live stream with exponential backoff reconnect.
@@ -122,6 +139,7 @@ export function useTrace(): TraceHandle {
         if (!msg) return;
 
         if (msg.kind === "reset") {
+          generation.current += 1; // Invalidate any in-flight snapshot.
           seen.current.clear();
           setEvents([]);
           refreshTraces();

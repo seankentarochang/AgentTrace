@@ -77,7 +77,7 @@ export function EntityNode({ data, selected }: NodeProps<EntityNodeType>) {
       {interiorUnobserved && (
         <div
           className="entity-unobserved"
-          title="Start/stop were observed, but no activity in between was captured. AgentTrace does not guess what happened here."
+          title="This agent's lifecycle — and any messages it exchanged — were observed, but nothing about its internal work was captured. AgentTrace does not guess what happened here."
         >
           ? internal activity unavailable
         </div>

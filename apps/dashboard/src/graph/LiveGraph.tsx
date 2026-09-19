@@ -80,7 +80,7 @@ function GraphCanvas({ state, selectedEventId, onSelect }: Props) {
     [selected?.source.id, selected?.destination?.id].filter(Boolean) as string[],
   );
 
-  const { nodes, edges } = useMemo(() => {
+  const { nodes, edges, links } = useMemo(() => {
     const views = entityViews(state);
     const links = viewEdges(state);
 
@@ -146,7 +146,7 @@ function GraphCanvas({ state, selectedEventId, onSelect }: Props) {
       };
     });
 
-    return { nodes, edges };
+    return { nodes, edges, links };
   }, [state, selectedEventId]);
 
   // Re-fit when the topology grows, but only once React Flow has measured
@@ -225,7 +225,7 @@ function GraphCanvas({ state, selectedEventId, onSelect }: Props) {
         nodesConnectable={false}
         elementsSelectable
         onEdgeClick={(_e, flowEdge) => {
-          const link = viewEdges(state).find((l) => l.id === flowEdge.id);
+          const link = links.find((l) => l.id === flowEdge.id);
           const last = link?.eventIds.at(-1);
           if (last) onSelect(last);
         }}

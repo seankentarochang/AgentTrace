@@ -14,6 +14,8 @@ import type {
   Visibility,
 } from "@agenttrace/protocol";
 
+// Mirrors the module-private ranking in packages/protocol/src/reducer.ts.
+// TODO(track-1): export it from the protocol package so the two can't drift.
 export const VISIBILITY_RANK: Record<Visibility, number> = {
   full_protocol: 2,
   structured_event: 1,
@@ -47,6 +49,21 @@ const LIFECYCLE_TYPES = new Set([
  */
 function isOwnLifecycle(event: TraceEvent): boolean {
   return LIFECYCLE_TYPES.has(event.type) && event.destination === undefined;
+}
+
+/**
+ * Evidence that we observed an agent's *internal work*, as opposed to its
+ * lifecycle or its conversation.
+ *
+ * Messages deliberately do not count. Seeing what an agent said tells us
+ * nothing about how it decided — a proxy at full_protocol visibility sits
+ * between agents and is structurally blind to what happens inside one. An
+ * agent we only ever saw talk is the spec §4 UNOBSERVABLE shape (delegation
+ * observed, reply observed, nothing in between) and must render as a "?"
+ * boundary rather than as a fully-observed node.
+ */
+function isObservedInternalWork(event: TraceEvent): boolean {
+  return !isOwnLifecycle(event) && event.type !== "agent_message";
 }
 
 /**
@@ -120,15 +137,36 @@ export function viewEdges(state: TraceState): ViewEdge[] {
   const events = new Map(state.events.map((e) => [e.eventId, e]));
   for (const edge of byPair.values()) {
     edge.eventIds.sort((x, y) => (order.get(x) ?? 0) - (order.get(y) ?? 0));
-    const last = events.get(edge.eventIds[edge.eventIds.length - 1] ?? "");
-    edge.active = last?.status === "started";
-    if (edge.eventIds.some((id) => events.get(id)?.status === "failure")) {
-      edge.status = "failure";
-    } else if (edge.active) {
-      edge.status = "started";
+    const edgeEvents = edge.eventIds
+      .map((id) => events.get(id))
+      .filter((e): e is TraceEvent => e !== undefined);
+
+    // An edge is active while any *operation* on it is open. Operations are
+    // identified by correlationId, so two concurrent calls on the same pair
+    // are tracked separately — looking only at the newest event would call
+    // the edge idle as soon as the first of them returned.
+    const operations = new Map<string, TraceEvent[]>();
+    for (const event of edgeEvents) {
+      const key = event.correlationId ?? event.eventId;
+      const list = operations.get(key) ?? [];
+      list.push(event);
+      operations.set(key, list);
     }
+    edge.active = [...operations.values()].some(
+      (ops) => ops[ops.length - 1]?.status === "started",
+    );
+
+    // Derived, never accumulated: a closed successful call must not stay
+    // "started" just because it once was.
+    const last = edgeEvents[edgeEvents.length - 1];
+    edge.status = edgeEvents.some((e) => e.status === "failure")
+      ? "failure"
+      : edge.active
+        ? "started"
+        : last?.status;
+
     // Point a merged edge the way the first observed event pointed.
-    const first = events.get(edge.eventIds[0] ?? "");
+    const first = edgeEvents[0];
     if (first?.destination) {
       edge.sourceId = first.source.id;
       edge.targetId = first.destination.id;
@@ -148,7 +186,6 @@ export interface EntityView {
    * rather than a blank the viewer might read as "did nothing".
    */
   interiorUnobserved: boolean;
-  spanCount: number;
 }
 
 export function entityViews(state: TraceState): EntityView[] {
@@ -173,14 +210,12 @@ export function entityViews(state: TraceState): EntityView[] {
         (e.type === "agent_start" || e.type === "session_start") &&
         e.destination === undefined,
     );
-    // Anything that is not this entity's own start/stop is observed activity.
-    const hasInterior = own.some((e) => !isOwnLifecycle(e));
+    const hasInterior = own.some(isObservedInternalWork);
     return {
       entity,
       visibility,
       interiorUnobserved:
         entity.ref.kind === "agent" && hasLifecycle && !hasInterior,
-      spanCount: state.spans.filter((s) => s.entityId === entity.ref.id).length,
     };
   });
 }
