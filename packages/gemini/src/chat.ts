@@ -106,9 +106,15 @@ export async function ask(
     try {
       return await askOpenRouter(question, traceId, openRouterKey);
     } catch (err) {
-      // Same contract as the Gemini path: never 501, fall back to the mock.
+      // Never 501, but a key IS configured, so say the model didn't run
+      // rather than pass the rule-based answer off as the model's.
       console.warn("[assistant] OpenRouter failed, using mock:", err);
-      return mockAsk(question, traceId);
+      const reason = err instanceof Error ? err.message.slice(0, 200) : String(err);
+      const fallback = await mockAsk(question, traceId);
+      return {
+        ...fallback,
+        answer: `> OpenRouter call failed (${reason}). Showing the rule-based answer instead.\n\n${fallback.answer}`,
+      };
     }
   }
 
