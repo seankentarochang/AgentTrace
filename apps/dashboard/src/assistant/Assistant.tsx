@@ -4,6 +4,8 @@
  * explanation came from observed data — the model never touches the trace.
  */
 import { useState } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { askAssistant, type AssistantResult } from "../lib/api";
 
 interface Props {
@@ -27,6 +29,7 @@ export function Assistant({ traceId }: Props) {
     if (!trimmed || !traceId || busy) return;
     setBusy(true);
     setAsked(trimmed);
+    setQuestion(""); // The asked question moves into the answer panel.
     setResult(undefined);
     try {
       setResult(await askAssistant(trimmed, traceId));
@@ -51,7 +54,11 @@ export function Assistant({ traceId }: Props) {
           {result?.error && (
             <div className="assistant-error">{result.error}</div>
           )}
-          {result?.answer && <div className="assistant-text">{result.answer}</div>}
+          {result?.answer && (
+            <div className="assistant-text markdown">
+              <Markdown remarkPlugins={[remarkGfm]}>{result.answer}</Markdown>
+            </div>
+          )}
           {result?.functionsCalled && result.functionsCalled.length > 0 && (
             <div className="assistant-provenance">
               <span className="hint">answered from</span>
@@ -89,10 +96,7 @@ export function Assistant({ traceId }: Props) {
               key={s}
               className="chip"
               disabled={!traceId || busy}
-              onClick={() => {
-                setQuestion(s);
-                void submit(s);
-              }}
+              onClick={() => void submit(s)}
             >
               {s}
             </button>
