@@ -2,7 +2,7 @@
  * Primary screen layout (spec §15): header stats, live graph + inspector
  * split, execution timeline, assistant bar.
  */
-import { useState } from "react";
+import { useRef, useState, type PointerEvent } from "react";
 import { DEMO_TRACE_ID } from "@agenttrace/protocol";
 import { useTrace, type SourceMode } from "./lib/useTrace";
 import { LiveGraph } from "./graph/LiveGraph";
@@ -14,6 +14,51 @@ import { ReplayControls } from "./replay/ReplayControls";
 import { formatMs } from "./lib/derive";
 
 const MODES: SourceMode[] = ["live", "fixture", "replay"];
+
+/** Drag handle; reports pointer delta along its axis since drag start. */
+function Splitter({
+  axis,
+  onDrag,
+}: {
+  axis: "x" | "y";
+  onDrag: (delta: number, done: boolean) => void;
+}) {
+  const pos = (e: PointerEvent) => (axis === "x" ? e.clientX : e.clientY);
+  const start = useRef(0);
+  return (
+    <div
+      className={`splitter splitter-${axis}`}
+      role="separator"
+      aria-orientation={axis === "x" ? "vertical" : "horizontal"}
+      onPointerDown={(e) => {
+        start.current = pos(e);
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (e.currentTarget.hasPointerCapture(e.pointerId))
+          onDrag(pos(e) - start.current, false);
+      }}
+      onPointerUp={(e) => {
+        if (e.currentTarget.hasPointerCapture(e.pointerId))
+          onDrag(pos(e) - start.current, true);
+      }}
+    />
+  );
+}
+
+/** Panel size that follows a Splitter drag, clamped to [min, max]. */
+function useDragSize(initial: number, min: number, max: () => number) {
+  const [size, setSize] = useState(initial);
+  const [base, setBase] = useState(initial);
+  const onDrag = (delta: number, done: boolean) => {
+    // Splitters sit before the panel they size, so dragging toward the
+    // panel (positive delta) shrinks it.
+    const next = Math.min(max(), Math.max(min, base - delta));
+    setSize(next);
+    if (done) setBase(next);
+  };
+  return [size, onDrag] as const;
+}
 
 export function App() {
   const {
@@ -34,6 +79,16 @@ export function App() {
   const toggleSelect = (eventId?: string) =>
     setSelectedEventId((prev) => (prev === eventId ? undefined : eventId));
   const m = state.metrics;
+  const [inspectorWidth, dragInspector] = useDragSize(
+    380,
+    240,
+    () => window.innerWidth - 300,
+  );
+  const [timelineHeight, dragTimeline] = useDragSize(
+    210,
+    60,
+    () => window.innerHeight - 260,
+  );
 
   return (
     <div className="app">
@@ -115,7 +170,10 @@ export function App() {
 
       {mode === "replay" && <ReplayControls replay={replay} />}
 
-      <div className="app-main">
+      <div
+        className="app-main"
+        style={{ gridTemplateColumns: `1fr auto ${inspectorWidth}px` }}
+      >
         <div className="panel graph-panel">
           <LiveGraph
             state={state}
@@ -124,6 +182,7 @@ export function App() {
           />
           <Legend />
         </div>
+        <Splitter axis="x" onDrag={dragInspector} />
         <div className="panel inspector-panel">
           <EventInspector
             state={state}
@@ -133,7 +192,8 @@ export function App() {
         </div>
       </div>
 
-      <div className="timeline-panel">
+      <Splitter axis="y" onDrag={dragTimeline} />
+      <div className="timeline-panel" style={{ height: timelineHeight }}>
         <Timeline
           state={state}
           selectedEventId={selectedEventId}

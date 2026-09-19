@@ -124,12 +124,16 @@ button { font: inherit; }
 .app-main {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 380px;
   min-height: 0;
 }
 
+.splitter { flex-shrink: 0; background: var(--border); touch-action: none; }
+.splitter:hover, .splitter:active { background: var(--accent); }
+.splitter-x { width: 4px; cursor: col-resize; }
+.splitter-y { height: 4px; cursor: row-resize; }
+
 .panel { background: var(--panel); min-height: 0; }
-.inspector-panel { border-left: 1px solid var(--border); overflow: auto; }
+.inspector-panel { overflow: auto; }
 
 .graph-panel {
   position: relative;
@@ -297,8 +301,6 @@ button { font: inherit; }
 /* ---------- timeline ---------- */
 
 .timeline-panel {
-  height: 210px;
-  border-top: 1px solid var(--border);
   overflow: auto;
   background: var(--panel);
   flex-shrink: 0;
