@@ -2,15 +2,15 @@
  * Shared helper every adapter uses to push a normalized TraceEvent into
  * the collector. Adapters own provider->canonical translation only.
  */
+import { randomUUID } from "node:crypto";
 import type { TraceEvent } from "@agenttrace/protocol";
 
 export const COLLECTOR_URL =
   process.env.AGENTTRACE_COLLECTOR_URL ?? "http://localhost:8787";
 
-let counter = 0;
-
+/** Globally unique: several adapter processes emit concurrently and the collector dedupes by eventId. */
 export function nextEventId(prefix = "evt"): string {
-  return `${prefix}_${Date.now().toString(36)}_${(counter++).toString(36)}`;
+  return `${prefix}_${randomUUID()}`;
 }
 
 /** Fire-and-forget by default; adapters must never break the host tool. */

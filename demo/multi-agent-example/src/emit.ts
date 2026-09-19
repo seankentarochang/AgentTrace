@@ -3,11 +3,11 @@
  * way a framework's hooks would. Provider adapter is "custom": these are
  * demo-owned emitters, not protocol traffic.
  */
+import { randomUUID } from "node:crypto";
 import type { TraceEvent } from "@agenttrace/protocol";
 
 const COLLECTOR = process.env.AGENTTRACE_COLLECTOR_URL ?? "http://localhost:8787";
 
-let counter = 0;
 
 export async function emit(event: TraceEvent): Promise<void> {
   try {
@@ -21,6 +21,7 @@ export async function emit(event: TraceEvent): Promise<void> {
   }
 }
 
+/** Globally unique: agents run as separate processes and the collector dedupes by eventId. */
 export function eventId(prefix = "demo"): string {
-  return `${prefix}_${Date.now().toString(36)}_${counter++}`;
+  return `${prefix}_${randomUUID()}`;
 }
