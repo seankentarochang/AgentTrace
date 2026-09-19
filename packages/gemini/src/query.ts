@@ -17,6 +17,7 @@ const KNOWN_FUNCTIONS = new Set([
   "getToolCalls",
   "getFailures",
   "getCriticalPath",
+  "getConcurrency",
   "getEventsBetween",
   "getEventsBefore",
   "getExactDuplicateCalls",

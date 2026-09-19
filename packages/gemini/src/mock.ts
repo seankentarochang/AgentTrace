@@ -4,7 +4,7 @@
  * executeTraceFunction path Gemini uses — zero LLM, zero fabrication.
  * This is the demo safety net: judges must never see a 501.
  */
-import type { Span, TraceEvent, TraceState } from "@agenttrace/protocol";
+import type { TraceEvent, TraceState } from "@agenttrace/protocol";
 import { COLLECTOR_URL, executeTraceFunction } from "./query.js";
 import type { AssistantAnswer } from "./chat.js";
 
@@ -35,6 +35,11 @@ interface DuplicateGroup {
   tool: string;
   count: number;
 }
+interface ConcurrencyResult {
+  maxConcurrentAgents: number;
+  overlappingAgents: { agentNames: string[]; overlapMs: number }[];
+  idleIntervals: { durationMs: number }[];
+}
 
 type QueryResult<T> = T | { error: string };
 type Call = (name: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -44,16 +49,6 @@ function isError(result: unknown): result is { error: string } {
 }
 
 const seconds = (ms: number) => Math.round(ms / 100) / 10;
-
-function spansOverlap(a: Span, b: Span): boolean {
-  if (!a.endTime || !b.endTime) return false;
-  const aStart = Date.parse(a.startTime);
-  const aEnd = Date.parse(a.endTime);
-  const bStart = Date.parse(b.startTime);
-  const bEnd = Date.parse(b.endTime);
-  if ([aStart, aEnd, bStart, bEnd].some(Number.isNaN)) return false;
-  return aStart < bEnd && bStart < aEnd;
-}
 
 /** Raw trace read for span timing, which no declared query function exposes. */
 async function fetchState(traceId: string): Promise<QueryResult<TraceState>> {
@@ -101,30 +96,16 @@ async function latencyAnswer(call: Call): Promise<string> {
   return `${answer} Longest spans: ${list}.`;
 }
 
-async function parallelAnswer(call: Call, traceId: string): Promise<string> {
-  const summary = (await call("getTraceSummary")) as QueryResult<TraceSummary>;
-  if (isError(summary)) return "Trace data wasn't available for this trace.";
-  const agents = summary.agents;
-  if (agents.length <= 1) {
-    return `Only ${agents.length} agent(s) ran (${agents[0] ?? "none"}); no parallel agent work.`;
+async function parallelAnswer(call: Call): Promise<string> {
+  const c = (await call("getConcurrency")) as QueryResult<ConcurrencyResult>;
+  if (isError(c)) return "Concurrency data wasn't available for this trace.";
+  if (c.overlappingAgents.length === 0) {
+    return `No agents ran in parallel (max concurrent: ${c.maxConcurrentAgents}).`;
   }
-  const ran = `${agents.length} agents ran: ${agents.join(", ")}.`;
-  const state = await fetchState(traceId);
-  if (isError(state)) {
-    return `${ran} Span timing wasn't available to check overlap.`;
-  }
-  const spans = state.spans.filter((s) => s.kind === "agent");
-  const pairs = new Set<string>();
-  for (let i = 0; i < spans.length; i++) {
-    for (let j = i + 1; j < spans.length; j++) {
-      if (spans[i].entityId !== spans[j].entityId && spansOverlap(spans[i], spans[j])) {
-        pairs.add(`${spans[i].name} + ${spans[j].name}`);
-      }
-    }
-  }
-  return pairs.size
-    ? `${ran} Overlapping agent spans: ${[...pairs].join(", ")}.`
-    : `${ran} No finished agent spans overlapped.`;
+  const pairs = c.overlappingAgents
+    .map((o) => `${o.agentNames.join(" + ")} for ${o.overlapMs}ms`)
+    .join(", ");
+  return `${c.maxConcurrentAgents} agents ran concurrently at peak. Overlapping: ${pairs}.`;
 }
 
 async function beforeAnswer(call: Call): Promise<string> {
@@ -201,7 +182,7 @@ export async function mockAsk(
     q.includes("concurrent") ||
     q.includes("same time")
   ) {
-    answer = await parallelAnswer(call, traceId);
+    answer = await parallelAnswer(call);
   } else if (
     q.includes("duplicate") ||
     q.includes("redundant") ||
