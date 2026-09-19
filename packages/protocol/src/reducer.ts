@@ -51,6 +51,35 @@ export interface Span {
   durationMs?: number;
   status: EventStatus;
   correlationId?: string;
+  /** Explicit causal parent from the event that opened this span. */
+  parentEventId?: string;
+}
+
+export interface AgentOverlap {
+  agentIds: [string, string];
+  agentNames: [string, string];
+  start: string;
+  end: string;
+  overlapMs: number;
+}
+
+export interface IdleInterval {
+  start: string;
+  end: string;
+  durationMs: number;
+}
+
+/** Timestamp-derived concurrency (spec §14). Unfinished spans run to trace end. */
+export interface ConcurrencyMetrics {
+  maxConcurrentAgents: number;
+  maxConcurrentToolCalls: number;
+  overlappingAgents: AgentOverlap[];
+  /**
+   * Trace-wide gaps where no span of any kind was open. A root session/agent
+   * span covers gaps beneath it; this does not measure an agent waiting on
+   * delegated work, which lifecycle events alone cannot establish.
+   */
+  idleIntervals: IdleInterval[];
 }
 
 export interface TraceMetrics {
@@ -64,11 +93,17 @@ export interface TraceMetrics {
   startedAt?: string;
   endedAt?: string;
   totalDurationMs?: number;
+  /** Filled by reduceEvents (needs the whole span set, not one event). */
+  concurrency?: ConcurrencyMetrics;
 }
 
 export interface TraceError {
   eventId: string;
   entityId: string;
+  /** Agent that owned the failed operation (e.g. the caller of a failed tool). */
+  ownerAgentId?: string;
+  /** Tool that produced the failure, when a tool was involved. */
+  toolId?: string;
   timestamp: string;
   message?: string;
 }
@@ -187,6 +222,7 @@ function openSpan(
     startTime: event.timestamp,
     status: "started",
     correlationId: event.correlationId,
+    parentEventId: event.parentEventId,
   });
 }
 
@@ -194,16 +230,15 @@ function closeSpan(
   state: TraceState,
   event: TraceEvent,
   spanKind: SpanKind,
-): void {
-  // Match by correlationId first, else fall back to the owning entity.
+): Span | undefined {
+  // Correlated events only pair with the same correlationId; uncorrelated
+  // events fall back to the most recent open span of the same entity.
   const candidate = [...state.spans].reverse().find((span) => {
     if (span.status !== "started" || span.kind !== spanKind) return false;
-    if (event.correlationId && span.correlationId) {
-      return span.correlationId === event.correlationId;
-    }
+    if (event.correlationId) return span.correlationId === event.correlationId;
     return span.ownerId === event.source.id || span.entityId === event.source.id;
   });
-  if (!candidate) return;
+  if (!candidate) return undefined;
 
   candidate.endEventId = event.eventId;
   candidate.endTime = event.timestamp;
@@ -211,6 +246,7 @@ function closeSpan(
     event.durationMs ??
     Date.parse(event.timestamp) - Date.parse(candidate.startTime);
   candidate.status = event.status ?? "success";
+  return candidate;
 }
 
 function extractErrorMessage(event: TraceEvent): string | undefined {
@@ -221,6 +257,123 @@ function extractErrorMessage(event: TraceEvent): string | undefined {
     if (typeof candidate === "string") return candidate;
   }
   return undefined;
+}
+
+function failureOwner(event: TraceEvent, closed?: Span): string | undefined {
+  if (event.source.kind === "agent") return event.source.id;
+  if (closed) return closed.ownerId;
+  return event.destination?.kind === "agent" ? event.destination.id : undefined;
+}
+
+/**
+ * Total order for events: wall-clock time, then monotonic clock, then
+ * eventId. Arrival order never matters, so shuffled input reduces identically.
+ */
+export function compareEvents(a: TraceEvent, b: TraceEvent): number {
+  return (
+    Date.parse(a.timestamp) - Date.parse(b.timestamp) ||
+    (a.monotonicNs ?? 0) - (b.monotonicNs ?? 0) ||
+    (a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0)
+  );
+}
+
+function spanEnd(span: Span, traceEnd: number): number {
+  return span.endTime ? Date.parse(span.endTime) : traceEnd;
+}
+
+/**
+ * Closed spans are [start, end), except zero-length spans count at their
+ * instant. Unfinished spans remain active at the last observed timestamp.
+ */
+function overlapPoints(spans: Span[], traceEnd: number) {
+  const points = spans.flatMap((span) => {
+    const start = Date.parse(span.startTime);
+    const end = spanEnd(span, traceEnd);
+    if (end < start) return [];
+    const points = [{ t: start, d: 1, order: 1, entityId: span.entityId }];
+    if (span.endTime) {
+      points.push({ t: end, d: -1, order: end === start ? 2 : 0, entityId: span.entityId });
+    }
+    return points;
+  });
+  // Regular ends, then all starts, then instantaneous ends at a timestamp.
+  return points.sort((a, b) => a.t - b.t || a.order - b.order);
+}
+
+/** Max number of simultaneously open spans (sweep line). */
+function maxOverlap(spans: Span[], traceEnd: number): number {
+  let open = 0;
+  let max = 0;
+  for (const p of overlapPoints(spans, traceEnd)) {
+    open += p.d;
+    max = Math.max(max, open);
+  }
+  return max;
+}
+
+/** Max number of distinct entities active at once, even with nested spans. */
+function maxDistinctEntityOverlap(spans: Span[], traceEnd: number): number {
+  const activeSpansByEntity = new Map<string, number>();
+  let max = 0;
+  for (const point of overlapPoints(spans, traceEnd)) {
+    const next = (activeSpansByEntity.get(point.entityId) ?? 0) + point.d;
+    if (next > 0) activeSpansByEntity.set(point.entityId, next);
+    else activeSpansByEntity.delete(point.entityId);
+    max = Math.max(max, activeSpansByEntity.size);
+  }
+  return max;
+}
+
+export function computeConcurrency(state: TraceState): ConcurrencyMetrics {
+  const { startedAt, endedAt } = state.metrics;
+  const traceEnd = endedAt ? Date.parse(endedAt) : 0;
+  const iso = (t: number) => new Date(t).toISOString();
+  const agents = state.spans.filter((s) => s.kind === "agent");
+  const tools = state.spans.filter((s) => s.kind === "tool");
+
+  const overlappingAgents: AgentOverlap[] = [];
+  for (let i = 0; i < agents.length; i++) {
+    for (let j = i + 1; j < agents.length; j++) {
+      const a = agents[i]!;
+      const b = agents[j]!;
+      if (a.entityId === b.entityId) continue;
+      const start = Math.max(Date.parse(a.startTime), Date.parse(b.startTime));
+      const end = Math.min(spanEnd(a, traceEnd), spanEnd(b, traceEnd));
+      if (end <= start) continue;
+      overlappingAgents.push({
+        agentIds: [a.entityId, b.entityId],
+        agentNames: [a.name, b.name],
+        start: iso(start),
+        end: iso(end),
+        overlapMs: end - start,
+      });
+    }
+  }
+
+  const idleIntervals: IdleInterval[] = [];
+  if (startedAt) {
+    let cursor = Date.parse(startedAt);
+    const ordered = [...state.spans].sort(
+      (a, b) => Date.parse(a.startTime) - Date.parse(b.startTime),
+    );
+    for (const span of ordered) {
+      const start = Date.parse(span.startTime);
+      if (start > cursor) {
+        idleIntervals.push({ start: iso(cursor), end: iso(start), durationMs: start - cursor });
+      }
+      cursor = Math.max(cursor, spanEnd(span, traceEnd));
+    }
+    if (traceEnd > cursor) {
+      idleIntervals.push({ start: iso(cursor), end: iso(traceEnd), durationMs: traceEnd - cursor });
+    }
+  }
+
+  return {
+    maxConcurrentAgents: maxDistinctEntityOverlap(agents, traceEnd),
+    maxConcurrentToolCalls: maxOverlap(tools, traceEnd),
+    overlappingAgents,
+    idleIntervals,
+  };
 }
 
 /** Mutates `state` in place. Returns the same state for convenience. */
@@ -236,6 +389,7 @@ export function applyEvent(state: TraceState, event: TraceEvent): TraceState {
 
   const m = state.metrics;
   m.eventCount += 1;
+  let closed: Span | undefined;
 
   switch (event.type) {
     case "session_start":
@@ -243,7 +397,7 @@ export function applyEvent(state: TraceState, event: TraceEvent): TraceState {
       source.status = "active";
       break;
     case "session_end":
-      closeSpan(state, event, "session");
+      closed = closeSpan(state, event, "session");
       source.status = event.status ?? "success";
       break;
     case "agent_start":
@@ -255,7 +409,7 @@ export function applyEvent(state: TraceState, event: TraceEvent): TraceState {
       if (event.destination) m.delegationCount += 1;
       break;
     case "agent_stop":
-      closeSpan(state, event, "agent");
+      closed = closeSpan(state, event, "agent");
       source.status = event.status ?? "success";
       break;
     case "agent_message":
@@ -266,29 +420,21 @@ export function applyEvent(state: TraceState, event: TraceEvent): TraceState {
       m.toolCallCount += 1;
       break;
     case "tool_result":
-      closeSpan(state, event, "tool");
+      closed = closeSpan(state, event, "tool");
       break;
     case "error":
     case "status_change":
-      if (event.status === "failure") {
-        m.failureCount += 1;
-        source.status = "failure";
-        state.errors.push({
-          eventId: event.eventId,
-          entityId: event.source.id,
-          timestamp: event.timestamp,
-          message: extractErrorMessage(event),
-        });
-      }
       break;
   }
 
-  if (event.status === "failure" && event.type !== "status_change" && event.type !== "error") {
+  if (event.status === "failure") {
     m.failureCount += 1;
     source.status = "failure";
     state.errors.push({
       eventId: event.eventId,
       entityId: event.source.id,
+      ownerAgentId: failureOwner(event, closed),
+      toolId: [event.source, event.destination].find((e) => e?.kind === "tool")?.id,
       timestamp: event.timestamp,
       message: extractErrorMessage(event),
     });
@@ -305,9 +451,8 @@ export function applyEvent(state: TraceState, event: TraceEvent): TraceState {
 
 export function reduceEvents(events: TraceEvent[], traceId?: string): TraceState {
   const state = createTraceState(traceId);
-  const ordered = [...events].sort((a, b) =>
-    a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0,
-  );
-  for (const event of ordered) applyEvent(state, event);
+  for (const event of [...events].sort(compareEvents)) applyEvent(state, event);
+  // Performance: O(agent spans²) pair scan; fine for small traces.
+  state.metrics.concurrency = computeConcurrency(state);
   return state;
 }

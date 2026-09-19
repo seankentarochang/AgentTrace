@@ -13,7 +13,8 @@ contract change, flag it in the group chat before changing shared files.
 | Ingest: `POST /v1/events` `{event}` → 202 | `packages/collector/src/server.ts` |
 | Live stream: `WS /v1/live` → `{kind:"event",event}` / `{kind:"reset"}` | `packages/collector/src/websocket.ts` |
 | Reads: `GET /v1/traces`, `GET /v1/traces/:id` → `{events, state}` | server.ts |
-| Deterministic queries: `summary`, `agents/:id/activity`, `tools`, `failures`, `critical-path`, `duplicates`, `events?from&to` / `?before&count` | server.ts + `analysis/queries.ts` |
+| Deterministic queries: `summary`, `agents/:id/activity`, `tools`, `failures`, `critical-path`, `concurrency`, `duplicates`, `events?from&to` / `?before&count` (unknown trace → 404) | server.ts + `analysis/queries.ts` |
+| Dev seed: `POST /v1/dev/seed[?realtime=1]` → fresh trace from the fixture via real ingest (broadcasts `reset` first) | server.ts |
 | Assistant: `POST /v1/assistant` `{question, traceId}` → `{answer}` | server.ts (lazy-loads `@agenttrace/gemini`) |
 | Gemini function names = `runQuery` names = REST paths | `packages/gemini/src/tools.ts` ↔ `query.ts` |
 
@@ -34,16 +35,16 @@ A2A proxies `:8800`/`:8801` · demo agents `:9101`/`:9102`.
 **Owns:** `packages/protocol/`, `packages/collector/`
 **Goal:** correct, deterministic TraceState + all query endpoints return real data.
 
-- [ ] Verify reducer edge cases: spans pairing via `correlationId`, unpaired
+- [x] Verify reducer edge cases: spans pairing via `correlationId`, unpaired
       `tool_call` stays `started`, out-of-order events sort correctly
       (`packages/protocol/src/reducer.ts`)
-- [ ] Real critical path over the span DAG (replace top-N stub in
+- [x] Real critical path over the span DAG (replace top-N stub in
       `analysis/timings.ts` — parent/child via `correlationId`/`parentEventId`)
-- [ ] Concurrency metrics: max concurrent agents, overlapping spans, idle gaps
+- [x] Concurrency metrics: max concurrent agents, overlapping spans, idle gaps
       (spec §14) — extend `TraceMetrics`
-- [ ] `payload` truncation / size guard on ingest; JSONL persistence check
+- [x] `payload` truncation / size guard on ingest; JSONL persistence check
       (`AGENTTRACE_DATA_DIR`)
-- [ ] Seed route for dev: `POST /v1/dev/seed` replays the fixture through real
+- [x] Seed route for dev: `POST /v1/dev/seed` replays the fixture through real
       ingest (unblocks Track 2/3 testing without adapters)
 
 **Done when:** fixture POSTed through ingest → dashboard shows correct

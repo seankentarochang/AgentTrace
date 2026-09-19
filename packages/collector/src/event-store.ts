@@ -5,7 +5,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { TraceEvent } from "@agenttrace/protocol";
+import { compareEvents, type TraceEvent } from "@agenttrace/protocol";
 
 export interface TraceSummary {
   traceId: string;
@@ -18,6 +18,8 @@ export interface TraceSummary {
 
 export class EventStore {
   private events = new Map<string, TraceEvent[]>();
+  /** eventIds already stored — makes ingest idempotent under adapter retries. */
+  private seen = new Set<string>();
   private file?: string;
 
   constructor(dataDir?: string) {
@@ -41,17 +43,22 @@ export class EventStore {
     }
   }
 
-  private addToMemory(event: TraceEvent): void {
+  private addToMemory(event: TraceEvent): boolean {
+    if (this.seen.has(event.eventId)) return false;
+    this.seen.add(event.eventId);
     const list = this.events.get(event.traceId) ?? [];
     list.push(event);
     this.events.set(event.traceId, list);
+    return true;
   }
 
-  add(event: TraceEvent): void {
-    this.addToMemory(event);
+  /** Returns false (and stores nothing) if the eventId was already ingested. */
+  add(event: TraceEvent): boolean {
+    if (!this.addToMemory(event)) return false;
     if (this.file) {
       appendFileSync(this.file, JSON.stringify(event) + "\n");
     }
+    return true;
   }
 
   getTrace(traceId: string): TraceEvent[] {
@@ -61,9 +68,7 @@ export class EventStore {
   listTraces(): TraceSummary[] {
     const summaries: TraceSummary[] = [];
     for (const [traceId, events] of this.events) {
-      const ordered = [...events].sort((a, b) =>
-        a.timestamp < b.timestamp ? -1 : 1,
-      );
+      const ordered = [...events].sort(compareEvents);
       const last = ordered[ordered.length - 1];
       const hasFailure = ordered.some((e) => e.status === "failure");
       const ended = ordered.some(
@@ -78,8 +83,9 @@ export class EventStore {
         status: hasFailure ? "failure" : ended ? "success" : "running",
       });
     }
-    return summaries.sort((a, b) =>
-      (b.startedAt ?? "") < (a.startedAt ?? "") ? -1 : 1,
+    // Newest first.
+    return summaries.sort(
+      (a, b) => Date.parse(b.startedAt ?? "") - Date.parse(a.startedAt ?? "") || 0,
     );
   }
 
