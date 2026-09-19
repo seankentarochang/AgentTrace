@@ -1,124 +1,253 @@
 /**
- * Live agent/tool topology (spec §16). Nodes = entities, edges = observed
- * interactions. Edge style encodes visibility — never imply more
- * visibility than the data has.
- *
- * TODO(track-2): proper layered layout (dagre), unobservable-boundary
- * rendering, node status colors, auto-fit on new nodes.
+ * Live agent/tool topology (spec §16). Nodes = observed entities, edges =
+ * observed interactions. Edge style encodes visibility; nothing is drawn
+ * that wasn't captured.
  */
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Background,
+  BackgroundVariant,
   Controls,
   MarkerType,
   ReactFlow,
+  ReactFlowProvider,
+  useEdgesState,
+  useNodesInitialized,
+  useNodesState,
+  useReactFlow,
   type Edge as FlowEdge,
   type Node as FlowNode,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { Edge, TraceState } from "@agenttrace/protocol";
+import type { TraceState } from "@agenttrace/protocol";
+import { entityViews, viewEdges, type ViewEdge } from "../lib/derive";
+import { layoutGraph } from "../lib/layout";
+import { EntityNode, type EntityNodeType } from "./EntityNode";
 
 interface Props {
   state: TraceState;
+  selectedEventId?: string;
   onSelect: (eventId: string) => void;
 }
 
-/** Simple layered layout: BFS depth -> x, index within layer -> y. */
-function layout(state: TraceState): Map<string, { x: number; y: number }> {
-  const depth = new Map<string, number>();
-  const roots = Object.keys(state.entities).filter(
-    (id) => !Object.values(state.edges).some((e) => e.destinationId === id),
+const nodeTypes = { entity: EntityNode };
+
+/**
+ * Declared up front so React Flow knows every node's box before it measures
+ * the DOM — otherwise the first fitView runs against zero-height bounds.
+ * Must match the sizes in EntityNode's CSS.
+ */
+const NODE_WIDTH = 190;
+const NODE_HEIGHT = 52;
+const UNOBSERVED_EXTRA = 34;
+
+function edgeLabel(edge: ViewEdge): string {
+  const kind =
+    edge.kind === "tool_call"
+      ? "tool call"
+      : edge.kind === "message"
+        ? "message"
+        : "lifecycle";
+  const count = edge.eventIds.length > 1 ? ` ×${edge.eventIds.length}` : "";
+  const caveat = edge.visibility === "lifecycle_only" ? " · lifecycle only" : "";
+  return `${kind}${count}${caveat}`;
+}
+
+function edgeColor(edge: ViewEdge): string {
+  if (edge.status === "failure") return "var(--failure)";
+  if (edge.active) return "var(--warn)";
+  if (edge.kind === "lifecycle") return "var(--muted)";
+  return "var(--accent)";
+}
+
+function GraphCanvas({ state, selectedEventId, onSelect }: Props) {
+  const { fitView } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
+  const wrapper = useRef<HTMLDivElement | null>(null);
+  /** Nodes the user dragged: their positions win over the computed layout. */
+  const pinned = useRef(new Set<string>());
+
+  // maxZoom keeps a small graph from being blown up to fill the pane.
+  const refit = useCallback(
+    () => fitView({ padding: 0.12, duration: 300, maxZoom: 1.2 }),
+    [fitView],
   );
-  const queue = roots.length > 0 ? [...roots] : Object.keys(state.entities).slice(0, 1);
-  for (const id of queue) depth.set(id, 0);
 
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    const d = depth.get(id) ?? 0;
-    for (const edge of Object.values(state.edges)) {
-      if (edge.sourceId !== id) continue;
-      const next = edge.destinationId;
-      if (!depth.has(next) || (depth.get(next) ?? 0) < d + 1) {
-        depth.set(next, d + 1);
-        queue.push(next);
-      }
-    }
-  }
-  for (const id of Object.keys(state.entities)) {
-    if (!depth.has(id)) depth.set(id, 0);
-  }
+  const selected = selectedEventId
+    ? state.events.find((e) => e.eventId === selectedEventId)
+    : undefined;
+  const focusIds = new Set(
+    [selected?.source.id, selected?.destination?.id].filter(Boolean) as string[],
+  );
 
-  const perLayer = new Map<number, number>();
-  const positions = new Map<string, { x: number; y: number }>();
-  for (const [id, d] of depth) {
-    const index = perLayer.get(d) ?? 0;
-    perLayer.set(d, index + 1);
-    positions.set(id, { x: d * 230, y: index * 100 });
-  }
-  return positions;
-}
+  const { nodes, edges, links } = useMemo(() => {
+    const views = entityViews(state);
+    const links = viewEdges(state);
 
-function edgeStyle(edge: Edge): { animated: boolean; dashed: boolean } {
-  return {
-    animated: edge.status === "started",
-    dashed: edge.visibility === "lifecycle_only",
-  };
-}
-
-export function LiveGraph({ state, onSelect }: Props) {
-  const { nodes, edges } = useMemo(() => {
-    const positions = layout(state);
-    const nodes: FlowNode[] = Object.values(state.entities).map((entity) => ({
-      id: entity.ref.id,
-      position: positions.get(entity.ref.id) ?? { x: 0, y: 0 },
-      data: { label: `${entity.ref.name} (${entity.ref.kind})` },
-      style: {
-        background: "var(--panel)",
-        color: "var(--text)",
-        border: `1px solid ${entity.status === "failure" ? "var(--failure)" : "var(--border)"}`,
-        borderRadius: 8,
-        fontSize: 12,
-        width: 180,
+    // First-seen order gives the layout a stable tiebreak.
+    const ordered = [...views].sort((a, b) =>
+      a.entity.firstSeen < b.entity.firstSeen ? -1 : 1,
+    );
+    const positions = layoutGraph(
+      {
+        nodeIds: ordered.map((v) => v.entity.ref.id),
+        edges: links.map((l) => ({ sourceId: l.sourceId, targetId: l.targetId })),
       },
-    }));
-    const edges: FlowEdge[] = Object.values(state.edges).map((edge) => {
-      const { animated, dashed } = edgeStyle(edge);
+      { nodeWidth: NODE_WIDTH, nodeHeight: NODE_HEIGHT + UNOBSERVED_EXTRA },
+    );
+
+    const nodes: EntityNodeType[] = ordered.map((view) => {
+      const id = view.entity.ref.id;
       return {
-        id: edge.id,
-        source: edge.sourceId,
-        target: edge.destinationId,
-        label: `${edge.kind} x${edge.eventIds.length}`,
-        animated,
-        style: {
-          stroke: edge.status === "failure" ? "var(--failure)" : "var(--accent)",
-          strokeDasharray: dashed ? "6 4" : undefined,
+        id,
+        type: "entity" as const,
+        position: positions.get(id) ?? { x: 0, y: 0 },
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT + (view.interiorUnobserved ? UNOBSERVED_EXTRA : 0),
+        selected: focusIds.has(id),
+        data: {
+          name: view.entity.ref.name,
+          entityKind: view.entity.ref.kind,
+          subtype: view.entity.ref.subtype,
+          status: view.entity.status,
+          visibility: view.visibility,
+          interiorUnobserved: view.interiorUnobserved,
+          eventCount: view.entity.eventCount,
+          dimmed: focusIds.size > 0 && !focusIds.has(id),
         },
-        labelStyle: { fill: "var(--muted)", fontSize: 10 },
-        markerEnd: { type: MarkerType.ArrowClosed },
       };
     });
-    return { nodes, edges };
-  }, [state]);
+
+    const edges: FlowEdge[] = links.map((link) => {
+      const color = edgeColor(link);
+      const involved =
+        focusIds.has(link.sourceId) && focusIds.has(link.targetId);
+      return {
+        id: link.id,
+        source: link.sourceId,
+        target: link.targetId,
+        label: edgeLabel(link),
+        animated: link.active,
+        style: {
+          stroke: color,
+          strokeWidth: link.visibility === "full_protocol" ? 2 : 1.4,
+          strokeDasharray:
+            link.visibility === "lifecycle_only" ? "6 5" : undefined,
+          opacity: focusIds.size > 0 && !involved ? 0.25 : 1,
+        },
+        labelStyle: { fill: "var(--muted)", fontSize: 10 },
+        labelBgStyle: { fill: "var(--panel)" },
+        labelBgPadding: [4, 2] as [number, number],
+        labelBgBorderRadius: 3,
+        markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
+        markerStart: link.bidirectional
+          ? { type: MarkerType.ArrowClosed, color, width: 14, height: 14 }
+          : undefined,
+      };
+    });
+
+    return { nodes, edges, links };
+  }, [state, selectedEventId]);
+
+  // Re-fit when the topology grows, but only once React Flow has measured
+  // the new nodes — otherwise live events leave the view mid-zoom.
+  // React Flow only measures nodes when it can report changes back, so the
+  // canvas is driven through useNodesState rather than plain props.
+  const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<EntityNodeType>([]);
+  const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState<FlowEdge>([]);
+
+  useEffect(() => {
+    setFlowNodes((prev) => {
+      const previous = new Map(prev.map((n) => [n.id, n.position]));
+      return nodes.map((node) =>
+        pinned.current.has(node.id) && previous.has(node.id)
+          ? { ...node, position: previous.get(node.id)! }
+          : node,
+      );
+    });
+  }, [nodes, setFlowNodes]);
+
+  useEffect(() => setFlowEdges(edges), [edges, setFlowEdges]);
+
+  // Re-fit when the topology changes and again once React Flow reports the
+  // nodes measured — fitting against half-measured bounds is what leaves the
+  // view zoomed into a single node.
+  const topologyKey = `${nodes.map((n) => n.id).join(",")}|${edges.length}`;
+  useEffect(() => {
+    // A plain timer, not requestAnimationFrame: rAF never fires while the
+    // tab is in the background, which would leave the graph unfitted until
+    // the next interaction.
+    const timer = setTimeout(refit, 120);
+    return () => clearTimeout(timer);
+  }, [topologyKey, nodesInitialized, refit]);
+
+  // The pane shrinks when the assistant answers or the window resizes;
+  // React Flow does not re-fit on its own.
+  useEffect(() => {
+    const element = wrapper.current;
+    if (!element) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(refit, 120);
+    });
+    observer.observe(element);
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [refit]);
+
+  if (nodes.length === 0) {
+    return (
+      <div className="empty-state">
+        <p>No entities observed yet.</p>
+        <p className="hint">
+          Start the collector and run <code>npm run demo</code>, or switch the
+          source to <b>fixture</b>.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      fitView
-      onEdgeClick={(_e, edge) => {
-        const last = state.edges[edge.id]?.eventIds.at(-1);
-        if (last) onSelect(last);
-      }}
-      onNodeClick={(_e, node) => {
-        const last = state.events.findLast(
-          (ev) => ev.source.id === node.id || ev.destination?.id === node.id,
-        );
-        if (last) onSelect(last.eventId);
-      }}
-      proOptions={{ hideAttribution: true }}
-    >
-      <Background />
-      <Controls />
-    </ReactFlow>
+    <div className="graph-canvas" ref={wrapper}>
+      <ReactFlow
+        nodes={flowNodes}
+        edges={flowEdges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeDragStop={(_e, node) => pinned.current.add(node.id)}
+        nodeTypes={nodeTypes}
+        minZoom={0.2}
+        maxZoom={1.6}
+        nodesDraggable
+        nodesConnectable={false}
+        elementsSelectable
+        onEdgeClick={(_e, flowEdge) => {
+          const link = links.find((l) => l.id === flowEdge.id);
+          const last = link?.eventIds.at(-1);
+          if (last) onSelect(last);
+        }}
+        onNodeClick={(_e, node) => {
+          const last = state.events.findLast(
+            (ev) => ev.source.id === node.id || ev.destination?.id === node.id,
+          );
+          if (last) onSelect(last.eventId);
+        }}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
+        <Controls showInteractive={false} position="top-right" />
+      </ReactFlow>
+    </div>
+  );
+}
+
+export function LiveGraph(props: Props) {
+  return (
+    <ReactFlowProvider>
+      <GraphCanvas {...props} />
+    </ReactFlowProvider>
   );
 }
