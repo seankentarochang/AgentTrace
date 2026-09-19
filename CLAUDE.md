@@ -56,7 +56,11 @@ unset = `/v1/assistant` returns 501 and everything else still works.
   (`packages/gemini/src/tools.ts`) — all three must stay in sync
 - Ports: collector 8787, dashboard 5173, proxies 8800/8801, demo 9101/9102
 - `POST /v1/dev/seed[?realtime=1]` replays the fixture as a fresh trace
-  through real ingest (no adapters needed). Ingest dedupes by `eventId`.
+  through real ingest (no adapters needed). Reseeding cancels any pending
+  replay before broadcasting reset. Ingest dedupes by `eventId`.
+- Concurrency `idleIntervals` are trace-wide gaps with no open span of any
+  kind. An enclosing session/agent span covers child gaps; this metric does
+  not infer whether a coordinator was waiting on delegated work.
 - Fixture for offline dev: `demoTraceEvents` in
   `packages/protocol/src/fixtures/demo-trace.ts` (dashboard "fixture" button)
 
