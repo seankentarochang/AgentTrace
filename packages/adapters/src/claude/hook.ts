@@ -105,6 +105,9 @@ export function mapClaudeHook(payload: unknown): TraceEvent[] {
         payload: { arguments: p.tool_input, raw: p },
       }];
     }
+    // Claude fires PostToolUseFailure INSTEAD of PostToolUse when a tool
+    // fails (e.g. non-zero exit), with `error` set; toolFailed() reads it.
+    case "PostToolUseFailure":
     case "PostToolUse": {
       const tool = toolRef(p);
       return [{
@@ -112,7 +115,7 @@ export function mapClaudeHook(payload: unknown): TraceEvent[] {
         category: "tool", type: "tool_result",
         status: toolFailed(p) ? "failure" : "success",
         correlationId: callId,
-        payload: { result: p.tool_response, raw: p },
+        payload: { result: p.tool_response ?? p.error, raw: p },
       }];
     }
     case "UserPromptSubmit":

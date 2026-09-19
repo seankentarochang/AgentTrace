@@ -57,12 +57,18 @@ for all projects) — do NOT commit a `.claude/` dir to this repo:
     "SessionStart":    [{ "hooks": [{ "type": "command", "command": "node --import tsx <abs>/packages/adapters/src/cli.ts claude" }] }],
     "PreToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "...same..." }] }],
     "PostToolUse":     [{ "matcher": "*", "hooks": [{ "type": "command", "command": "...same..." }] }],
+    "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "...same..." }] }],
     "UserPromptSubmit":[{ "hooks": [{ "type": "command", "command": "...same..." }] }],
     "Stop":            [{ "hooks": [{ "type": "command", "command": "...same..." }] }],
     "SubagentStop":    [{ "hooks": [{ "type": "command", "command": "...same..." }] }]
   }
 }
 ```
+
+Register `PostToolUseFailure` too: when a tool fails (e.g. a Bash command
+exits non-zero) Claude Code fires it *instead of* `PostToolUse`, with
+`"error": "Exit code N"` and no `tool_response`. Without it a failed tool
+call never closes in the trace.
 
 `<abs>` = absolute path to this repo. `node --import tsx` resolves `tsx` from
 the hook's cwd — run the framework from the repo root, or point NODE_PATH at
