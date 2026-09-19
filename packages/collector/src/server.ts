@@ -55,6 +55,15 @@ function stateFor(traceId: string) {
   return reduceEvents(store.getTrace(traceId), traceId);
 }
 
+// Unknown traceId -> 404 on every per-trace route, so queries (and Gemini)
+// never report an empty-but-"ok" result for a typo'd id.
+app.addHook("preHandler", async (request, reply) => {
+  const { traceId } = (request.params ?? {}) as { traceId?: string };
+  if (traceId !== undefined && store.getTrace(traceId).length === 0) {
+    return reply.code(404).send({ error: "trace not found" });
+  }
+});
+
 // --- ingestion -----------------------------------------------------------
 
 /**
@@ -108,11 +117,9 @@ app.post("/v1/events", async (request, reply) => {
 
 app.get("/v1/traces", async () => ({ traces: store.listTraces() }));
 
-app.get("/v1/traces/:traceId", async (request, reply) => {
+app.get("/v1/traces/:traceId", async (request) => {
   const { traceId } = request.params as { traceId: string };
-  const events = store.getTrace(traceId);
-  if (events.length === 0) return reply.code(404).send({ error: "trace not found" });
-  return { traceId, events, state: stateFor(traceId) };
+  return { traceId, events: store.getTrace(traceId), state: stateFor(traceId) };
 });
 
 // --- deterministic query endpoints (spec §19) ----------------------------
@@ -207,6 +214,9 @@ app.get("/v1/health", async () => ({ ok: true, clients: hub.size }));
 app.post("/v1/dev/seed", async (request, reply) => {
   const { realtime } = request.query as { realtime?: string };
   const traceId = `trace_seed_${Date.now()}`;
+  // The dashboard reduces every live event together; clear it so a second
+  // seed doesn't merge into the first (same entity ids, new traceId).
+  hub.broadcast({ kind: "reset" });
   const base = Date.parse(demoTraceEvents[0]!.timestamp);
   const now = Date.now();
 
