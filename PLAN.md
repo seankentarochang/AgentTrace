@@ -34,16 +34,16 @@ A2A proxies `:8800`/`:8801` · demo agents `:9101`/`:9102`.
 **Owns:** `packages/protocol/`, `packages/collector/`
 **Goal:** correct, deterministic TraceState + all query endpoints return real data.
 
-- [ ] Verify reducer edge cases: spans pairing via `correlationId`, unpaired
+- [x] Verify reducer edge cases: spans pairing via `correlationId`, unpaired
       `tool_call` stays `started`, out-of-order events sort correctly
       (`packages/protocol/src/reducer.ts`)
-- [ ] Real critical path over the span DAG (replace top-N stub in
+- [x] Real critical path over the span DAG (replace top-N stub in
       `analysis/timings.ts` — parent/child via `correlationId`/`parentEventId`)
-- [ ] Concurrency metrics: max concurrent agents, overlapping spans, idle gaps
+- [x] Concurrency metrics: max concurrent agents, overlapping spans, idle gaps
       (spec §14) — extend `TraceMetrics`
-- [ ] `payload` truncation / size guard on ingest; JSONL persistence check
+- [x] `payload` truncation / size guard on ingest; JSONL persistence check
       (`AGENTTRACE_DATA_DIR`)
-- [ ] Seed route for dev: `POST /v1/dev/seed` replays the fixture through real
+- [x] Seed route for dev: `POST /v1/dev/seed` replays the fixture through real
       ingest (unblocks Track 2/3 testing without adapters)
 
 **Done when:** fixture POSTed through ingest → dashboard shows correct

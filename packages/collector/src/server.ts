@@ -9,18 +9,21 @@
  *   GET  /v1/traces/:traceId/tools?name=
  *   GET  /v1/traces/:traceId/failures
  *   GET  /v1/traces/:traceId/critical-path
+ *   GET  /v1/traces/:traceId/concurrency
  *   GET  /v1/traces/:traceId/duplicates
  *   GET  /v1/traces/:traceId/events?from&to | ?before=<eventId>&count=
  *   POST /v1/assistant                   Gemini NL query (Track 3)
  *   WS   /v1/live                        live broadcast of every event
+ *   POST /v1/dev/seed[?realtime=1]       replay the demo fixture through ingest
  *
- * Ingestion pipeline: validate -> assign id -> persist -> metrics ->
- * broadcast. No LLM participates.
+ * Ingestion pipeline: assign id -> validate -> cap payload -> dedupe ->
+ * persist -> broadcast. No LLM participates.
  */
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import websocketPlugin from "@fastify/websocket";
 import {
+  demoTraceEvents,
   reduceEvents,
   validateTraceEvent,
   type TraceEvent,
@@ -29,6 +32,7 @@ import { EventStore } from "./event-store.js";
 import { LiveHub } from "./websocket.js";
 import {
   getAgentActivity,
+  getConcurrency,
   getCriticalPath,
   getExactDuplicateCalls,
   getFailures,
@@ -39,6 +43,7 @@ import { getEventsBefore, getEventsBetween } from "./analysis/timings.js";
 
 const PORT = Number(process.env.COLLECTOR_PORT ?? 8787);
 const DATA_DIR = process.env.AGENTTRACE_DATA_DIR; // unset => memory only
+const MAX_PAYLOAD_BYTES = Number(process.env.AGENTTRACE_MAX_PAYLOAD_BYTES ?? 64 * 1024);
 
 const app = Fastify({ logger: true });
 await app.register(websocketPlugin);
@@ -52,24 +57,51 @@ function stateFor(traceId: string) {
 
 // --- ingestion -----------------------------------------------------------
 
-app.post("/v1/events", async (request, reply) => {
-  const body = request.body as { event?: unknown } | undefined;
-  const raw = body && "event" in body ? body.event : body;
+/**
+ * Oversized payloads are replaced before persist/broadcast, so the JSONL log,
+ * the live stream and every read agree on the same (capped) event.
+ */
+function capPayload(event: TraceEvent): TraceEvent {
+  if (event.payload === undefined) return event;
+  const json = JSON.stringify(event.payload);
+  const bytes = Buffer.byteLength(json);
+  if (bytes <= MAX_PAYLOAD_BYTES) return event;
+  return {
+    ...event,
+    payload: { truncated: true, originalBytes: bytes, preview: json.slice(0, 2048) },
+  };
+}
 
+type IngestResult =
+  | { ok: true; eventId: string; duplicate: boolean }
+  | { ok: false; errors: string[] };
+
+/** The one ingest pipeline — HTTP and the dev seed route both go through it. */
+function ingest(raw: unknown): IngestResult {
   const candidate =
     raw && typeof raw === "object" && !("eventId" in raw)
       ? { ...(raw as object), eventId: `evt_${randomUUID()}` }
       : raw;
 
   const result = validateTraceEvent(candidate);
+  if (!result.ok) return { ok: false, errors: result.errors };
+
+  const event = capPayload(result.event);
+  const stored = store.add(event);
+  if (stored) hub.broadcast({ kind: "event", event });
+  return { ok: true, eventId: event.eventId, duplicate: !stored };
+}
+
+app.post("/v1/events", async (request, reply) => {
+  const body = request.body as { event?: unknown } | undefined;
+  const raw = body && typeof body === "object" && "event" in body ? body.event : body;
+  const result = ingest(raw);
   if (!result.ok) {
     return reply.code(400).send({ error: "invalid TraceEvent", details: result.errors });
   }
-
-  const event = result.event as TraceEvent;
-  store.add(event);
-  hub.broadcast({ kind: "event", event });
-  return reply.code(202).send({ accepted: true, eventId: event.eventId });
+  return reply
+    .code(202)
+    .send({ accepted: true, eventId: result.eventId, duplicate: result.duplicate });
 });
 
 // --- reads ---------------------------------------------------------------
@@ -109,6 +141,11 @@ app.get("/v1/traces/:traceId/failures", async (request) => {
 app.get("/v1/traces/:traceId/critical-path", async (request) => {
   const { traceId } = request.params as { traceId: string };
   return getCriticalPath(stateFor(traceId));
+});
+
+app.get("/v1/traces/:traceId/concurrency", async (request) => {
+  const { traceId } = request.params as { traceId: string };
+  return getConcurrency(stateFor(traceId));
 });
 
 app.get("/v1/traces/:traceId/duplicates", async (request) => {
@@ -161,6 +198,38 @@ app.get("/v1/live", { websocket: true }, (socket) => {
 // --- dev helpers ---------------------------------------------------------
 
 app.get("/v1/health", async () => ({ ok: true, clients: hub.size }));
+
+/**
+ * Replays the demo fixture as a fresh trace (new traceId/eventIds, timestamps
+ * shifted to now) through the real ingest pipeline. `?realtime=1` paces the
+ * events by their original offsets so the dashboard animates live.
+ */
+app.post("/v1/dev/seed", async (request, reply) => {
+  const { realtime } = request.query as { realtime?: string };
+  const traceId = `trace_seed_${Date.now()}`;
+  const base = Date.parse(demoTraceEvents[0]!.timestamp);
+  const now = Date.now();
+
+  const events = demoTraceEvents.map((e) => {
+    const offset = Date.parse(e.timestamp) - base;
+    return {
+      offset,
+      event: {
+        ...e,
+        traceId,
+        eventId: `${traceId}_${e.eventId}`,
+        timestamp: new Date(now + offset).toISOString(),
+      },
+    };
+  });
+
+  if (realtime === "1" || realtime === "true") {
+    for (const { offset, event } of events) setTimeout(() => ingest(event), offset);
+    return reply.code(202).send({ traceId, scheduled: events.length });
+  }
+  for (const { event } of events) ingest(event);
+  return reply.code(202).send({ traceId, accepted: events.length });
+});
 
 app.listen({ port: PORT, host: "127.0.0.1" }).catch((err) => {
   app.log.error(err);

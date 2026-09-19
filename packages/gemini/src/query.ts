@@ -20,6 +20,8 @@ function pathFor(name: string, args: Record<string, unknown>): string {
       return `/v1/traces/${traceId}/failures`;
     case "getCriticalPath":
       return `/v1/traces/${traceId}/critical-path`;
+    case "getConcurrency":
+      return `/v1/traces/${traceId}/concurrency`;
     case "getEventsBetween":
       return `/v1/traces/${traceId}/events?from=${encodeURIComponent(String(args.start))}&to=${encodeURIComponent(String(args.end))}`;
     case "getEventsBefore":
