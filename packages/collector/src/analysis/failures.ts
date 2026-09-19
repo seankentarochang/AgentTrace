@@ -8,6 +8,8 @@ export interface FailureReport {
   firstFailure?: {
     eventId: string;
     entityId: string;
+    ownerAgentId?: string;
+    toolId?: string;
     timestamp: string;
     message?: string;
     /** Last successful event anywhere in the trace before this failure. */
@@ -16,6 +18,8 @@ export interface FailureReport {
   failures: {
     eventId: string;
     entityId: string;
+    ownerAgentId?: string;
+    toolId?: string;
     timestamp: string;
     message?: string;
   }[];
@@ -25,10 +29,11 @@ export function getFailures(state: TraceState): FailureReport {
   const first = state.errors[0];
   let lastSuccessBefore: string | undefined;
   if (first) {
-    const prior = state.events
-      .filter((e) => e.timestamp < first.timestamp && e.status === "success")
-      .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
-    lastSuccessBefore = prior[0]?.eventId;
+    // state.events is already in compareEvents order.
+    const failedAt = Date.parse(first.timestamp);
+    lastSuccessBefore = [...state.events].reverse().find(
+      (e) => Date.parse(e.timestamp) < failedAt && e.status === "success",
+    )?.eventId;
   }
   return {
     failureCount: state.errors.length,

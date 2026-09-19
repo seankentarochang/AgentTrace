@@ -24,6 +24,7 @@ directly. Internal packages resolve via `exports: "./src/index.ts"`.
 ```bash
 npm install                 # everything, from repo root
 npm run typecheck           # all workspaces — run before committing
+npm run check -w @agenttrace/collector   # backend self-check vs fixture
 npm run dev:collector       # collector :8787
 npm run dev:dashboard       # dashboard :5173 (proxies /v1 incl. WS)
 npm run dev:a2a-proxy       # single A2A proxy :8800
@@ -54,6 +55,12 @@ unset = `/v1/assistant` returns 501 and everything else still works.
 - Query endpoints → `runQuery()` names → Gemini function declarations
   (`packages/gemini/src/tools.ts`) — all three must stay in sync
 - Ports: collector 8787, dashboard 5173, proxies 8800/8801, demo 9101/9102
+- `POST /v1/dev/seed[?realtime=1]` replays the fixture as a fresh trace
+  through real ingest (no adapters needed). Reseeding cancels any pending
+  replay before broadcasting reset. Ingest dedupes by `eventId`.
+- Concurrency `idleIntervals` are trace-wide gaps with no open span of any
+  kind. An enclosing session/agent span covers child gaps; this metric does
+  not infer whether a coordinator was waiting on delegated work.
 - Fixture for offline dev: `demoTraceEvents` in
   `packages/protocol/src/fixtures/demo-trace.ts` (dashboard "fixture" button)
 

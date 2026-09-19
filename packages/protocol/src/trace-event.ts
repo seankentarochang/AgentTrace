@@ -46,6 +46,7 @@ export interface TraceEvent {
 
   /** ISO 8601 timestamp. */
   timestamp: string;
+  /** Emitter-local monotonic clock used to order equal wall-clock timestamps. */
   monotonicNs?: number;
 
   source: EntityRef;

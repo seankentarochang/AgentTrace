@@ -51,7 +51,18 @@ export const traceToolDeclarations: FunctionDeclaration[] = [
   },
   {
     name: "getCriticalPath",
-    description: "Longest-duration spans contributing to total latency.",
+    description:
+      "Critical path through the span tree: the chain of agent/tool spans the run was actually waiting on.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: { traceId: traceIdParam },
+      required: ["traceId"],
+    },
+  },
+  {
+    name: "getConcurrency",
+    description:
+      "Which agents worked in parallel: max concurrent agents/tool calls, overlapping agent pairs with overlap ms, idle intervals.",
     parameters: {
       type: Type.OBJECT,
       properties: { traceId: traceIdParam },

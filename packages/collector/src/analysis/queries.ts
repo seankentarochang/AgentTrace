@@ -43,6 +43,11 @@ export function getToolCalls(state: TraceState, toolName?: string) {
   );
 }
 
+/** Timestamp-derived parallelism: which agents overlapped, and for how long. */
+export function getConcurrency(state: TraceState) {
+  return state.metrics.concurrency;
+}
+
 export { getCriticalPath, getFailures, getEventsBefore, getExactDuplicateCalls };
 
 export function getEventsBetweenIds(
@@ -73,6 +78,8 @@ export function runQuery(
       return getFailures(state);
     case "getCriticalPath":
       return getCriticalPath(state);
+    case "getConcurrency":
+      return getConcurrency(state);
     case "getEventsBetween":
       return getEventsBetween(state.events, String(args.start), String(args.end));
     case "getEventsBefore":
