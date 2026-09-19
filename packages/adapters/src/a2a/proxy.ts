@@ -29,8 +29,17 @@ function callerRef(request: { headers: Record<string, unknown> }): EntityRef {
   return { id, kind: "agent", name: String(request.headers["x-agent-name"] ?? id) };
 }
 
-function targetRef(): EntityRef {
-  return { id: `a2a_target:${TARGET}`, kind: "agent", name: TARGET };
+function targetRef(request: { headers: Record<string, unknown> }): EntityRef {
+  // Callers declare the intended destination agent so the graph shows real
+  // agent identities instead of proxy URLs. Fallback: the upstream URL.
+  const id = String(
+    request.headers["x-target-agent-id"] ?? `a2a_target:${TARGET}`,
+  );
+  return {
+    id,
+    kind: "agent",
+    name: String(request.headers["x-target-agent-name"] ?? id),
+  };
 }
 
 function base(traceId: string) {
@@ -44,14 +53,27 @@ function base(traceId: string) {
   };
 }
 
+// Local health endpoint — not forwarded, used by run-demo readiness checks.
+app.get("/healthz", async () => ({ ok: true, target: TARGET }));
+
 app.all("/*", async (request, reply) => {
-  const body = typeof request.body === "string" ? request.body : "";
-  let json: Record<string, unknown> | undefined;
-  try {
-    json = body ? (JSON.parse(body) as Record<string, unknown>) : undefined;
-  } catch {
-    json = undefined;
-  }
+  // Fastify's built-in parser yields an object for application/json; the "*"
+  // parser yields strings for everything else. Handle both.
+  const raw = request.body;
+  const json: Record<string, unknown> | undefined =
+    raw && typeof raw === "object"
+      ? (raw as Record<string, unknown>)
+      : (() => {
+          try {
+            return typeof raw === "string" && raw
+              ? (JSON.parse(raw) as Record<string, unknown>)
+              : undefined;
+          } catch {
+            return undefined;
+          }
+        })();
+  const body =
+    typeof raw === "string" ? raw : raw === undefined ? "" : JSON.stringify(raw);
 
   // A2A requests carry task/context ids we map straight into correlation.
   const params = json?.params as Record<string, unknown> | undefined;
@@ -65,7 +87,7 @@ app.all("/*", async (request, reply) => {
     (message?.contextId as string) ?? (params?.contextId as string) ?? taskId;
 
   const caller = callerRef(request);
-  const target = targetRef();
+  const target = targetRef(request);
 
   // 1. Record the inbound message.
   emitEventSafe({

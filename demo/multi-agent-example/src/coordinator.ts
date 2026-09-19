@@ -35,13 +35,19 @@ interface A2AResponse {
   result?: { status?: { state?: string } };
 }
 
-async function send(proxyUrl: string, request: unknown): Promise<A2AResponse> {
+async function send(
+  proxyUrl: string,
+  request: unknown,
+  target: { id: string; name: string },
+): Promise<A2AResponse> {
   const res = await fetch(`${proxyUrl}/a2a`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-agent-id": me.id,
       "x-agent-name": me.name,
+      "x-target-agent-id": target.id,
+      "x-target-agent-name": target.name,
     },
     body: JSON.stringify(request),
   });
@@ -64,8 +70,16 @@ async function main() {
   });
 
   const [research, review] = await Promise.all([
-    send(RESEARCHER_PROXY, a2aRequest("task_research", "Search the repo for recent changes to auth tests.")),
-    send(REVIEWER_PROXY, a2aRequest("task_review", "Re-run the auth test suite and report failures.")),
+    send(
+      RESEARCHER_PROXY,
+      a2aRequest("task_research", "Search the repo for recent changes to auth tests."),
+      { id: "agent_researcher", name: "Researcher" },
+    ),
+    send(
+      REVIEWER_PROXY,
+      a2aRequest("task_review", "Re-run the auth test suite and report failures."),
+      { id: "agent_reviewer", name: "Reviewer" },
+    ),
   ]);
 
   console.log("researcher:", JSON.stringify(research.result?.status ?? research));

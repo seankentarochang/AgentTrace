@@ -53,8 +53,8 @@ spawnTsx(
   "proxy:reviewer",
 );
 
-await waitFor("http://localhost:8800/a2a", "proxy:researcher");
-await waitFor("http://localhost:8801/a2a", "proxy:reviewer");
+await waitFor("http://localhost:8800/healthz", "proxy:researcher");
+await waitFor("http://localhost:8801/healthz", "proxy:reviewer");
 
 await import("./coordinator.js");
 
