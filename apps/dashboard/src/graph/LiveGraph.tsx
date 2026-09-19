@@ -27,7 +27,8 @@ import { EntityNode, type EntityNodeType } from "./EntityNode";
 interface Props {
   state: TraceState;
   selectedEventId?: string;
-  onSelect: (eventId: string) => void;
+  /** undefined = clear the selection (pane click). */
+  onSelect: (eventId?: string) => void;
 }
 
 const nodeTypes = { entity: EntityNode };
@@ -156,6 +157,18 @@ function GraphCanvas({ state, selectedEventId, onSelect }: Props) {
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<EntityNodeType>([]);
   const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState<FlowEdge>([]);
 
+  // Selection is app-driven (selectedEventId -> node.selected in the memo).
+  // React Flow's own select changes (node click, pane click) would desync
+  // the border from the app state — drop them.
+  const handleNodesChange = useCallback<typeof onNodesChange>(
+    (changes) => onNodesChange(changes.filter((c) => c.type !== "select")),
+    [onNodesChange],
+  );
+  const handleEdgesChange = useCallback<typeof onEdgesChange>(
+    (changes) => onEdgesChange(changes.filter((c) => c.type !== "select")),
+    [onEdgesChange],
+  );
+
   useEffect(() => {
     setFlowNodes((prev) => {
       const previous = new Map(prev.map((n) => [n.id, n.position]));
@@ -215,8 +228,9 @@ function GraphCanvas({ state, selectedEventId, onSelect }: Props) {
       <ReactFlow
         nodes={flowNodes}
         edges={flowEdges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
+        onNodesChange={handleNodesChange}
+        onEdgesChange={handleEdgesChange}
+        onPaneClick={() => onSelect(undefined)}
         onNodeDragStop={(_e, node) => pinned.current.add(node.id)}
         nodeTypes={nodeTypes}
         minZoom={0.2}

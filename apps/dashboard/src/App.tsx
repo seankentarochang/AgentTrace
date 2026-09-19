@@ -3,12 +3,14 @@
  * split, execution timeline, assistant bar.
  */
 import { useState } from "react";
+import { DEMO_TRACE_ID } from "@agenttrace/protocol";
 import { useTrace, type SourceMode } from "./lib/useTrace";
 import { LiveGraph } from "./graph/LiveGraph";
 import { Legend } from "./graph/Legend";
 import { Timeline } from "./timeline/Timeline";
 import { EventInspector } from "./inspector/EventInspector";
 import { Assistant } from "./assistant/Assistant";
+import { ReplayControls } from "./replay/ReplayControls";
 import { formatMs } from "./lib/derive";
 
 const MODES: SourceMode[] = ["live", "fixture", "replay"];
@@ -24,8 +26,13 @@ export function App() {
     setMode,
     restartReplay,
     refreshTraces,
+    replay,
   } = useTrace();
   const [selectedEventId, setSelectedEventId] = useState<string>();
+  // Clicking the already-selected event (node, span bar, inspector link)
+  // deselects it; undefined clears the selection (pane click).
+  const toggleSelect = (eventId?: string) =>
+    setSelectedEventId((prev) => (prev === eventId ? undefined : eventId));
   const m = state.metrics;
 
   return (
@@ -33,32 +40,36 @@ export function App() {
       <header className="app-header">
         <h1>AgentTrace</h1>
 
-        {mode === "live" ? (
-          <select
-            className="trace-picker"
-            value={traceId ?? ""}
-            disabled={traces.length === 0 && !traceId}
-            onChange={(e) => {
-              selectTrace(e.target.value);
-              setSelectedEventId(undefined);
-            }}
-            onMouseDown={refreshTraces}
-          >
-            {traces.length === 0 && !traceId && (
-              <option value="">no traces yet</option>
-            )}
-            {traceId && !traces.some((t) => t.traceId === traceId) && (
-              <option value={traceId}>{traceId} · live</option>
-            )}
-            {traces.map((t) => (
-              <option key={t.traceId} value={t.traceId}>
-                {t.traceId} · {t.eventCount} ev · {t.status}
+        {/* One source picker for all tabs — live/fixture/replay only change
+            how the selected trace arrives. DEMO_TRACE_ID = bundled fixture. */}
+        <select
+          className="trace-picker"
+          value={traceId ?? ""}
+          onChange={(e) => {
+            selectTrace(e.target.value);
+            setSelectedEventId(undefined);
+          }}
+          onMouseDown={refreshTraces}
+        >
+          {!traceId && (
+            <option value="">
+              {traces.length ? "pick a trace…" : "no traces yet"}
+            </option>
+          )}
+          <option value={DEMO_TRACE_ID}>{DEMO_TRACE_ID} · bundled fixture</option>
+          {traceId !== DEMO_TRACE_ID &&
+            traceId &&
+            !traces.some((t) => t.traceId === traceId) && (
+              <option value={traceId}>
+                {traceId} · {mode}
               </option>
-            ))}
-          </select>
-        ) : (
-          <span className="trace-picker static">{traceId} · fixture</span>
-        )}
+            )}
+          {traces.map((t) => (
+            <option key={t.traceId} value={t.traceId}>
+              {t.traceId} · {t.eventCount} ev · {t.status}
+            </option>
+          ))}
+        </select>
 
         <span className="stats">
           <b>{m.agentCount}</b> agents · <b>{m.toolCallCount}</b> calls ·{" "}
@@ -102,12 +113,14 @@ export function App() {
         </span>
       </header>
 
+      {mode === "replay" && <ReplayControls replay={replay} />}
+
       <div className="app-main">
         <div className="panel graph-panel">
           <LiveGraph
             state={state}
             selectedEventId={selectedEventId}
-            onSelect={setSelectedEventId}
+            onSelect={toggleSelect}
           />
           <Legend />
         </div>
@@ -115,7 +128,7 @@ export function App() {
           <EventInspector
             state={state}
             eventId={selectedEventId}
-            onSelect={setSelectedEventId}
+            onSelect={toggleSelect}
           />
         </div>
       </div>
@@ -124,13 +137,14 @@ export function App() {
         <Timeline
           state={state}
           selectedEventId={selectedEventId}
-          onSelect={setSelectedEventId}
+          onSelect={toggleSelect}
         />
       </div>
 
-      {/* Fixture/replay traces live only in the browser — the collector
-          can't answer questions about them, so the bar stays disabled. */}
-      <Assistant traceId={mode === "live" ? traceId : undefined} />
+      {/* Browser-side traces (fixture, replay-without-a-trace) can't be
+          answered by the collector — the bar stays disabled for them.
+          Replaying a real collector trace keeps the assistant enabled. */}
+      <Assistant traceId={traceId === DEMO_TRACE_ID ? undefined : traceId} />
     </div>
   );
 }

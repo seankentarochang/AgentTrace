@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  compareEvents,
   DEMO_TRACE_ID,
   demoTraceEvents,
   reduceEvents,
@@ -18,6 +19,23 @@ import { getTrace, listTraces, type TraceSummary } from "./api";
 
 export type ConnectionState = "connecting" | "live" | "offline";
 export type SourceMode = "live" | "fixture" | "replay";
+
+export interface ReplayHandle {
+  /** Playback position within the replayed timeline, ms. */
+  positionMs: number;
+  /** Total duration of the trace being replayed, ms. */
+  totalMs: number;
+  /** True when replaying the bundled fixture (no trace selected). */
+  isFixture: boolean;
+  paused: boolean;
+  speed: number;
+  setPaused: (v: boolean) => void;
+  setSpeed: (v: number) => void;
+  /** Jump to a position; works while playing or paused. */
+  seek: (ms: number) => void;
+  /** Back to t=0 and playing — what "play" does once the run has ended. */
+  restart: () => void;
+}
 
 export interface TraceHandle {
   state: TraceState;
@@ -31,10 +49,22 @@ export interface TraceHandle {
   /** Restart the fixture replay from t=0. */
   restartReplay: () => void;
   refreshTraces: () => void;
+  replay: ReplayHandle;
 }
 
-const REPLAY_SPEED = 1; // 1 = real fixture timing
+const REPLAY_TICK_MS = 50;
 const MAX_BACKOFF_MS = 10_000;
+
+const offsetsOf = (events: TraceEvent[]): number[] => {
+  const base = events[0] ? Date.parse(events[0].timestamp) : 0;
+  return events.map((e) => Date.parse(e.timestamp) - base);
+};
+
+const countAt = (offsets: number[], posMs: number) => {
+  let n = 0;
+  while (n < offsets.length && offsets[n] <= posMs) n++;
+  return n;
+};
 
 /** Union by eventId; the reducer sorts by timestamp, so order is free here. */
 function mergeEvents(a: TraceEvent[], b: TraceEvent[]): TraceEvent[] {
@@ -50,8 +80,10 @@ export function useTrace(): TraceHandle {
   const [traceId, setTraceId] = useState<string>();
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [mode, setMode] = useState<SourceMode>("live");
-  const [replayCount, setReplayCount] = useState(0);
   const [replayNonce, setReplayNonce] = useState(0);
+  const [replayPosition, setReplayPosition] = useState(0);
+  const [replayPaused, setReplayPaused] = useState(false);
+  const [replaySpeed, setReplaySpeed] = useState(1);
 
   const seen = useRef(new Set<string>());
   /**
@@ -172,46 +204,93 @@ export function useTrace(): TraceHandle {
     };
   }, [refreshTraces]);
 
-  // Fixture replay: reveal fixture events at their recorded offsets.
+  // Replay: a position clock drives how many of the target trace's events
+  // are revealed — pause/speed/seek are all just math on the same position.
+  // The target is the selected trace's events; DEMO_TRACE_ID selects the
+  // bundled fixture explicitly, and it's also the offline fallback.
+  const bundled = traceId === DEMO_TRACE_ID;
+  const replaySource = useMemo(() => {
+    if (mode !== "replay") return [];
+    const source = bundled || events.length === 0 ? demoTraceEvents : events;
+    return [...source].sort(compareEvents);
+  }, [mode, events, bundled]);
+  const replayOffsets = useMemo(() => offsetsOf(replaySource), [replaySource]);
+  const replayTotalMs = replayOffsets.at(-1) ?? 0;
+  const replayIsFixture =
+    mode === "replay" && (bundled || events.length === 0);
+
   useEffect(() => {
     if (mode !== "replay") return;
-    setReplayCount(0);
-    const base = Date.parse(demoTraceEvents[0]?.timestamp ?? "");
-    const timers = demoTraceEvents.map((event, i) =>
-      setTimeout(
-        () => setReplayCount(i + 1),
-        (Date.parse(event.timestamp) - base) / REPLAY_SPEED,
-      ),
+    setReplayPosition(0);
+  }, [mode, replayNonce, traceId]);
+
+  useEffect(() => {
+    if (mode !== "replay" || replayPaused) return;
+    const tick = setInterval(
+      () =>
+        setReplayPosition((pos) =>
+          Math.min(pos + REPLAY_TICK_MS * replaySpeed, replayTotalMs),
+        ),
+      REPLAY_TICK_MS,
     );
-    return () => timers.forEach(clearTimeout);
-  }, [mode, replayNonce]);
+    return () => clearInterval(tick);
+  }, [mode, replayPaused, replaySpeed, replayTotalMs]);
 
   const restartReplay = useCallback(() => {
+    setReplayPaused(false);
     setMode("replay");
     setReplayNonce((n) => n + 1);
   }, []);
 
+  const seekReplay = useCallback(
+    (ms: number) => setReplayPosition(Math.max(0, Math.min(ms, replayTotalMs))),
+    [replayTotalMs],
+  );
+
+  const restartPlayback = useCallback(() => {
+    setReplayPosition(0);
+    setReplayPaused(false);
+  }, []);
+
   const effective = useMemo(() => {
-    if (mode === "fixture") return demoTraceEvents;
-    if (mode === "replay") return demoTraceEvents.slice(0, replayCount);
+    if (bundled) return demoTraceEvents;
+    if (mode === "fixture") return events.length ? events : demoTraceEvents;
+    if (mode === "replay")
+      return replaySource.slice(0, countAt(replayOffsets, replayPosition));
     return events;
-  }, [mode, replayCount, events]);
+  }, [mode, replaySource, replayOffsets, replayPosition, events, bundled]);
+
+  // The dropdown selects a data source; the mode only changes how it plays.
+  // With nothing selected, non-live tabs imply the bundled fixture.
+  const shownTraceId =
+    traceId ?? (mode === "live" ? undefined : DEMO_TRACE_ID);
 
   const state = useMemo(
-    () => reduceEvents(effective, mode === "live" ? traceId : DEMO_TRACE_ID),
-    [effective, mode, traceId],
+    () => reduceEvents(effective, shownTraceId),
+    [effective, shownTraceId],
   );
 
   return {
     state,
     events: effective,
     traces,
-    traceId: mode === "live" ? traceId : DEMO_TRACE_ID,
+    traceId: shownTraceId,
     selectTrace: setTraceId,
     connection,
     mode,
     setMode,
     restartReplay,
     refreshTraces,
+    replay: {
+      positionMs: replayPosition,
+      totalMs: replayTotalMs,
+      isFixture: replayIsFixture,
+      paused: replayPaused,
+      speed: replaySpeed,
+      setPaused: setReplayPaused,
+      setSpeed: setReplaySpeed,
+      seek: seekReplay,
+      restart: restartPlayback,
+    },
   };
 }

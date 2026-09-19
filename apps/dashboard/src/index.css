@@ -94,6 +94,31 @@ button { font: inherit; }
 .app-header .conn.connecting { color: var(--warn); }
 .app-header .conn.offline { color: var(--muted); }
 
+/* ---------- replay controls ---------- */
+
+.replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.replay-btn {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.replay-btn:hover { border-color: var(--accent); }
+.replay-btn.active { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.replay-seek { flex: 1; accent-color: var(--accent); }
+.replay-time { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.replay-speeds { display: flex; gap: 4px; }
+
 /* ---------- main split ---------- */
 
 .app-main {
