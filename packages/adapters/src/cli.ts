@@ -10,9 +10,9 @@
  * forwards them to the collector. Must exit 0 even on failure so the host
  * framework is never blocked by observability.
  *
- * Set AGENTTRACE_HOOK_DUMP to a directory to also write every raw payload
- * to <dir>/<adapter>-<timestamp>-<rand>.json — use it to capture real
- * payloads for fixing the mapper field names.
+ * Pass --dump=<dir> or set AGENTTRACE_HOOK_DUMP to also write every raw
+ * payload to <dir>/<adapter>-<timestamp>-<rand>.json — use it to capture
+ * real payloads for fixing the mapper field names.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +22,8 @@ import { mapClaudeHook } from "./claude/hook.js";
 import { emitEvent } from "./emit.js";
 
 const adapter = process.argv[2];
-const dumpDir = process.env.AGENTTRACE_HOOK_DUMP;
+const dumpFlag = process.argv.find((a) => a.startsWith("--dump="));
+const dumpDir = dumpFlag?.slice("--dump=".length) ?? process.env.AGENTTRACE_HOOK_DUMP;
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];

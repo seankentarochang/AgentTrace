@@ -75,20 +75,27 @@ swap to live Gemini.
 `GEMINI_API_KEY` or real Codex/Claude sessions. Both CLIs are installed
 locally (`codex-cli 0.155.0`, `claude 2.1.214`).
 
-- [ ] **Capture (do this first, it's ~15 min):** register a hook command in
-      the tool's config pointing at `agenttrace-ingest` with
-      `AGENTTRACE_HOOK_DUMP=<dir>` set — every raw payload lands in
-      `dumps/`. Verify codex-cli 0.155's hook config schema from its docs
-      (guess: `~/.codex/config.toml`; Claude Code uses
-      `~/.claude/settings.json` `hooks` — documented format)
-- [ ] Fix `codex/hook.ts` field names against dumped payloads — every name
-      in there is a guess (`hook_event_name`, `tool.call_id`, `turn_id`…)
-- [ ] Map only documented fields; unknown hooks → `[]` (already correct)
+- [x] ~~Discover hook schema~~ — DONE from source: `codex/hook.ts` written
+      against `codex-rs/hooks/src/schema.rs` field names (`tool_name`,
+      `tool_use_id`, `tool_input`, `tool_response`, `agent_id`,
+      `agent_type`, `turn_id`, `prompt`, `source`). Verified via replay —
+      produces correct delegation edges + paired tool spans.
+- [ ] **Register + verify (~15 min):** enable `[features] codex_hooks = true`
+      in `~/.codex/config.toml`, copy `packages/adapters/src/codex/hooks.example.json`
+      to `~/.codex/hooks.json` (fix the repo path inside), run one real
+      session. `--dump=dumps` captures raw payloads for diffing.
+- [ ] Diff dumped payloads vs mapper assumptions — esp. whether subagent
+      events share the parent's `session_id` (if not, link traces via
+      `agent_id`/`turn_id` instead)
+- [ ] Confirm `tool_response` failure marker → PostToolUse status mapping
 - [ ] Run one real Codex session with hooks live → events appear in the
       dashboard alongside a demo trace = §30 #7 satisfied
 - [ ] `claude/hook.ts`: same pattern (fields: `hook_event_name`,
       `tool_name`, `tool_input`, `session_id`, `transcript_path` — verify
-      against dumps too)
+      against dumps too). NOTE: Claude emits `SubagentStop` but no
+      `SubagentStart` — expect point-in-time events, not delegation spans.
+      Codex is the only adapter proving agent→agent delegation from a real
+      framework; Claude is breadth-only. Cut first if behind.
 - [ ] Live Gemini: set `GEMINI_API_KEY`, verify `ask()` function-call
       round-trip, check `functionsCalled` reaches the UI, sanity-check
       redaction on real query results
