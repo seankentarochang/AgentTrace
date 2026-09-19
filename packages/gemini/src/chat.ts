@@ -14,7 +14,6 @@ import { executeTraceFunction } from "./query.js";
 import { redactValue } from "./redact.js";
 import { mockAsk } from "./mock.js";
 
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 const MAX_TOOL_ROUNDS = 6;
 
 const SYSTEM_PROMPT = `You are the query interface for AgentTrace, an observability tool for multi-agent systems.
@@ -138,7 +137,7 @@ export async function ask(
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const response = await ai.models.generateContent({
-      model: MODEL,
+      model: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
       contents,
       config: {
         systemInstruction: SYSTEM_PROMPT,

@@ -50,6 +50,9 @@ export interface TraceHandle {
   restartReplay: () => void;
   refreshTraces: () => void;
   replay: ReplayHandle;
+  /** Scrub: when set, only events within N ms of the first are visible. */
+  viewUntilMs?: number;
+  setViewUntilMs: (ms?: number) => void;
 }
 
 const REPLAY_TICK_MS = 50;
@@ -252,6 +255,8 @@ export function useTrace(): TraceHandle {
     setReplayPaused(false);
   }, []);
 
+  const [viewUntilMs, setViewUntilMs] = useState<number>();
+
   const effective = useMemo(() => {
     if (bundled) return demoTraceEvents;
     if (mode === "fixture") return events.length ? events : demoTraceEvents;
@@ -260,19 +265,28 @@ export function useTrace(): TraceHandle {
     return events;
   }, [mode, replaySource, replayOffsets, replayPosition, events, bundled]);
 
+  // Scrub filter — voice/UI "rewind to there" for live and fixture data.
+  const visible = useMemo(() => {
+    if (viewUntilMs == null || effective.length === 0) return effective;
+    const base = Date.parse(effective[0].timestamp);
+    return effective.filter(
+      (e) => Date.parse(e.timestamp) - base <= viewUntilMs,
+    );
+  }, [effective, viewUntilMs]);
+
   // The dropdown selects a data source; the mode only changes how it plays.
   // With nothing selected, non-live tabs imply the bundled fixture.
   const shownTraceId =
     traceId ?? (mode === "live" ? undefined : DEMO_TRACE_ID);
 
   const state = useMemo(
-    () => reduceEvents(effective, shownTraceId),
-    [effective, shownTraceId],
+    () => reduceEvents(visible, shownTraceId),
+    [visible, shownTraceId],
   );
 
   return {
     state,
-    events: effective,
+    events: visible,
     traces,
     traceId: shownTraceId,
     selectTrace: setTraceId,
@@ -292,5 +306,7 @@ export function useTrace(): TraceHandle {
       seek: seekReplay,
       restart: restartPlayback,
     },
+    viewUntilMs,
+    setViewUntilMs,
   };
 }

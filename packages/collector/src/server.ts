@@ -205,6 +205,27 @@ app.post("/v1/assistant", async (request, reply) => {
   }
 });
 
+// --- voice (Gemini Live — dashboard connects directly with an ephemeral token) ---
+
+app.post("/v1/voice/token", async (request, reply) => {
+  try {
+    const geminiModule = "@agenttrace/gemini";
+    const { createVoiceToken } = (await import(geminiModule)) as {
+      createVoiceToken: () => Promise<
+        { token: string; model: string } | { error: string }
+      >;
+    };
+    const result = await createVoiceToken();
+    if ("error" in result) {
+      return reply.code(503).send(result);
+    }
+    return result;
+  } catch (err) {
+    request.log.warn(err);
+    return reply.code(503).send({ error: "voice token unavailable" });
+  }
+});
+
 // --- live websocket ------------------------------------------------------
 
 app.get("/v1/live", { websocket: true }, (socket) => {

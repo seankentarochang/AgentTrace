@@ -5,7 +5,7 @@
  * This is the demo safety net: judges must never see a 501.
  */
 import type { TraceEvent, TraceState } from "@agenttrace/protocol";
-import { COLLECTOR_URL, executeTraceFunction } from "./query.js";
+import { collectorUrl, executeTraceFunction } from "./query.js";
 import type { AssistantAnswer } from "./chat.js";
 
 // Minimal shapes of the collector's deterministic query results.
@@ -54,7 +54,7 @@ const seconds = (ms: number) => Math.round(ms / 100) / 10;
 async function fetchState(traceId: string): Promise<QueryResult<TraceState>> {
   try {
     const res = await fetch(
-      `${COLLECTOR_URL}/v1/traces/${encodeURIComponent(traceId)}`,
+      `${collectorUrl()}/v1/traces/${encodeURIComponent(traceId)}`,
     );
     if (!res.ok) return { error: `HTTP ${res.status}` };
     const body = (await res.json()) as { state?: TraceState };

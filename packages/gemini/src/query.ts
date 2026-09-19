@@ -8,8 +8,11 @@
  * a normal function response instead of throwing.
  */
 
-export const COLLECTOR_URL =
-  process.env.AGENTTRACE_COLLECTOR_URL ?? "http://localhost:8787";
+/** Lazy env read — this module also ships to the dashboard, where `process`
+ *  doesn't exist at import time. */
+export function collectorUrl(): string {
+  return process.env.AGENTTRACE_COLLECTOR_URL ?? "http://localhost:8787";
+}
 
 const KNOWN_FUNCTIONS = new Set([
   "getTraceSummary",
@@ -113,7 +116,7 @@ export async function executeTraceFunction(
   const validated = validateArgs(name, args);
   if (!validated.ok) return { error: validated.error };
   try {
-    const res = await fetch(`${COLLECTOR_URL}${pathFor(name, validated.args)}`);
+    const res = await fetch(`${collectorUrl()}${pathFor(name, validated.args)}`);
     if (!res.ok) {
       return { error: `query ${name} failed: HTTP ${res.status}` };
     }

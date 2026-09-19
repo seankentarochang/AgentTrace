@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@agenttrace/gemini": "*",
+    "@google/genai": "^1.52.0",
     "@agenttrace/protocol": "*",
     "@xyflow/react": "^12.3.0",
     "react": "^19.1.0",

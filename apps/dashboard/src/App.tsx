@@ -1,8 +1,8 @@
 /**
  * Primary screen layout (spec §15): header stats, live graph + inspector
- * split, execution timeline, assistant bar.
+ * split, execution timeline, assistant bar, voice bar.
  */
-import { useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { DEMO_TRACE_ID } from "@agenttrace/protocol";
 import { useTrace, type SourceMode } from "./lib/useTrace";
 import { LiveGraph } from "./graph/LiveGraph";
@@ -11,6 +11,9 @@ import { Timeline } from "./timeline/Timeline";
 import { EventInspector } from "./inspector/EventInspector";
 import { Assistant } from "./assistant/Assistant";
 import { ReplayControls } from "./replay/ReplayControls";
+import { VoiceBar } from "./voice/VoiceBar";
+import { useVoice } from "./voice/useVoice";
+import type { UiActions } from "./voice/uiTools";
 import { formatMs } from "./lib/derive";
 
 const MODES: SourceMode[] = ["live", "fixture", "replay"];
@@ -63,6 +66,7 @@ function useDragSize(initial: number, min: number, max: () => number) {
 export function App() {
   const {
     state,
+    events,
     traces,
     traceId,
     selectTrace,
@@ -72,12 +76,27 @@ export function App() {
     restartReplay,
     refreshTraces,
     replay,
+    viewUntilMs,
+    setViewUntilMs,
   } = useTrace();
   const [selectedEventId, setSelectedEventId] = useState<string>();
+  const [highlightIds, setHighlightIds] = useState<string[]>([]);
+  const [isolateId, setIsolateId] = useState<string>();
+  /** Last few selections — lets voice resolve "this", "these two", "the other". */
+  const [recentSelections, setRecentSelections] = useState<string[]>([]);
+
+  const recordSelection = (eventId: string) =>
+    setRecentSelections((prev) =>
+      [eventId, ...prev.filter((id) => id !== eventId)].slice(0, 5),
+    );
+
   // Clicking the already-selected event (node, span bar, inspector link)
   // deselects it; undefined clears the selection (pane click).
-  const toggleSelect = (eventId?: string) =>
+  const toggleSelect = (eventId?: string) => {
     setSelectedEventId((prev) => (prev === eventId ? undefined : eventId));
+    if (eventId) recordSelection(eventId);
+  };
+
   const m = state.metrics;
   const [inspectorWidth, dragInspector] = useDragSize(
     380,
@@ -89,6 +108,128 @@ export function App() {
     60,
     () => window.innerHeight - 260,
   );
+
+  /** Highlighted event ids -> the entities behind them (deterministic map). */
+  const highlightEntityIds = useMemo(() => {
+    if (!highlightIds.length) return undefined;
+    const set = new Set<string>();
+    for (const e of events) {
+      if (highlightIds.includes(e.eventId)) {
+        set.add(e.source.id);
+        if (e.destination) set.add(e.destination.id);
+      }
+    }
+    return set.size ? set : undefined;
+  }, [highlightIds, events]);
+
+  /** Voice UI tools — the only way the model changes the screen. */
+  const uiActions = useMemo<UiActions>(
+    () => ({
+      selectEvent: (eventId) => {
+        setSelectedEventId(eventId);
+        recordSelection(eventId);
+      },
+      selectAgent: (agentId) => {
+        const last = events.findLast(
+          (e) => e.source.id === agentId || e.destination?.id === agentId,
+        );
+        if (!last) return { ok: false, error: `no events for ${agentId}` };
+        setSelectedEventId(last.eventId);
+        recordSelection(last.eventId);
+        return { ok: true, eventId: last.eventId };
+      },
+      highlightEvents: (eventIds) => {
+        const valid = eventIds.filter((id) =>
+          events.some((e) => e.eventId === id),
+        );
+        if (!valid.length) return { ok: false, error: "no known event ids" };
+        setHighlightIds(valid);
+        return { ok: true };
+      },
+      isolateEntity: (entityId) => {
+        if (!state.entities[entityId])
+          return { ok: false, error: `unknown entity ${entityId}` };
+        setIsolateId(entityId);
+        return { ok: true };
+      },
+      setViewUntil: ({ eventId, seconds }) => {
+        const base = Date.parse(events[0]?.timestamp ?? "");
+        if (eventId) {
+          const ev = events.find((e) => e.eventId === eventId);
+          if (!ev) return { ok: false, error: `unknown event ${eventId}` };
+          setViewUntilMs(Date.parse(ev.timestamp) - base);
+          return { ok: true };
+        }
+        if (typeof seconds === "number") {
+          setViewUntilMs(seconds * 1000);
+          return { ok: true };
+        }
+        return { ok: false, error: "eventId or seconds required" };
+      },
+      showFailures: () => {
+        const ids = events
+          .filter((e) => e.status === "failure")
+          .map((e) => e.eventId);
+        setHighlightIds(ids);
+        return { ok: true, count: ids.length };
+      },
+      clearView: () => {
+        setSelectedEventId(undefined);
+        setHighlightIds([]);
+        setIsolateId(undefined);
+        setViewUntilMs(undefined);
+      },
+    }),
+    [events, state.entities, setViewUntilMs],
+  );
+
+  /** Compact UI state the model reads to resolve deictic references. */
+  const contextJson = useMemo(() => {
+    const selected = events.find((e) => e.eventId === selectedEventId);
+    const base = Date.parse(events[0]?.timestamp ?? "");
+    const entity = (kind: string) =>
+      Object.values(state.entities)
+        .filter((en) => en.ref.kind === kind)
+        .map((en) => ({ id: en.ref.id, name: en.ref.name, status: en.status }));
+    return JSON.stringify({
+      traceId: traceId ?? null,
+      mode,
+      selectedEvent: selected
+        ? {
+            id: selected.eventId,
+            type: selected.type,
+            source: selected.source.id,
+            destination: selected.destination?.id ?? null,
+            msFromStart: Date.parse(selected.timestamp) - base,
+          }
+        : null,
+      recentSelections,
+      highlightedEventIds: highlightIds,
+      isolatedEntityId: isolateId ?? null,
+      viewUntilMs: viewUntilMs ?? null,
+      agents: entity("agent"),
+      tools: entity("tool"),
+    });
+  }, [
+    events,
+    state.entities,
+    traceId,
+    mode,
+    selectedEventId,
+    recentSelections,
+    highlightIds,
+    isolateId,
+    viewUntilMs,
+  ]);
+
+  const voice = useVoice({
+    contextJson: useCallback(() => contextJson, [contextJson]),
+    actions: uiActions,
+  });
+  // Every UI-state change reaches the session (debounced inside the hook).
+  useEffect(() => {
+    voice.pushContext();
+  }, [contextJson, voice.pushContext]);
 
   return (
     <div className="app">
@@ -169,6 +310,16 @@ export function App() {
       </header>
 
       {mode === "replay" && <ReplayControls replay={replay} />}
+      {mode !== "replay" && viewUntilMs != null && (
+        <div className="replay-controls">
+          <span className="replay-time">
+            viewing first {formatMs(viewUntilMs)} of the trace
+          </span>
+          <button className="replay-btn" onClick={() => setViewUntilMs(undefined)}>
+            clear
+          </button>
+        </div>
+      )}
 
       <div
         className="app-main"
@@ -178,6 +329,8 @@ export function App() {
           <LiveGraph
             state={state}
             selectedEventId={selectedEventId}
+            highlightEntityIds={highlightEntityIds}
+            isolateEntityId={isolateId}
             onSelect={toggleSelect}
           />
           <Legend />
@@ -205,6 +358,7 @@ export function App() {
           answered by the collector — the bar stays disabled for them.
           Replaying a real collector trace keeps the assistant enabled. */}
       <Assistant traceId={traceId === DEMO_TRACE_ID ? undefined : traceId} />
+      <VoiceBar voice={voice} />
     </div>
   );
 }

@@ -27,6 +27,10 @@ import { EntityNode, type EntityNodeType } from "./EntityNode";
 interface Props {
   state: TraceState;
   selectedEventId?: string;
+  /** Entities to keep bright; everything else dims (voice/UI highlight). */
+  highlightEntityIds?: ReadonlySet<string>;
+  /** Show only this entity + its downstream subtree (voice/UI isolate). */
+  isolateEntityId?: string;
   /** undefined = clear the selection (pane click). */
   onSelect: (eventId?: string) => void;
 }
@@ -61,7 +65,13 @@ function edgeColor(edge: ViewEdge): string {
   return "var(--accent)";
 }
 
-function GraphCanvas({ state, selectedEventId, onSelect }: Props) {
+function GraphCanvas({
+  state,
+  selectedEventId,
+  highlightEntityIds,
+  isolateEntityId,
+  onSelect,
+}: Props) {
   const { fitView } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const wrapper = useRef<HTMLDivElement | null>(null);
@@ -77,13 +87,37 @@ function GraphCanvas({ state, selectedEventId, onSelect }: Props) {
   const selected = selectedEventId
     ? state.events.find((e) => e.eventId === selectedEventId)
     : undefined;
-  const focusIds = new Set(
-    [selected?.source.id, selected?.destination?.id].filter(Boolean) as string[],
-  );
+  // Voice/UI highlight overrides selection-driven focus when present.
+  const focusIds = highlightEntityIds?.size
+    ? new Set(highlightEntityIds)
+    : new Set(
+        [selected?.source.id, selected?.destination?.id].filter(
+          Boolean,
+        ) as string[],
+      );
 
   const { nodes, edges, links } = useMemo(() => {
-    const views = entityViews(state);
-    const links = viewEdges(state);
+    let views = entityViews(state);
+    let links = viewEdges(state);
+
+    // Isolate: keep the entity plus everything reachable downstream over
+    // observed edges — its subtree, nothing more.
+    if (isolateEntityId) {
+      const keep = new Set([isolateEntityId]);
+      for (let grew = true; grew; ) {
+        grew = false;
+        for (const l of links) {
+          if (keep.has(l.sourceId) && !keep.has(l.targetId)) {
+            keep.add(l.targetId);
+            grew = true;
+          }
+        }
+      }
+      views = views.filter((v) => keep.has(v.entity.ref.id));
+      links = links.filter(
+        (l) => keep.has(l.sourceId) && keep.has(l.targetId),
+      );
+    }
 
     // First-seen order gives the layout a stable tiebreak.
     const ordered = [...views].sort((a, b) =>
@@ -148,7 +182,7 @@ function GraphCanvas({ state, selectedEventId, onSelect }: Props) {
     });
 
     return { nodes, edges, links };
-  }, [state, selectedEventId]);
+  }, [state, selectedEventId, highlightEntityIds, isolateEntityId]);
 
   // Re-fit when the topology grows, but only once React Flow has measured
   // the new nodes — otherwise live events leave the view mid-zoom.

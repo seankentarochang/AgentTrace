@@ -711,3 +711,52 @@ button { font: inherit; }
 }
 .chip:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
 .chip:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---------- voice bar ---------- */
+
+.voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.voice-mic {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.voice-mic:hover { border-color: var(--accent); }
+.voice-mic.live { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.voice-mic.error { border-color: var(--failure); color: var(--failure); }
+.voice-status { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.voice-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  margin-right: 6px;
+}
+.voice-dot.live { background: var(--success); }
+.voice-dot.speaking { background: var(--accent); }
+.voice-transcript {
+  flex: 1;
+  min-width: 0;
+  max-height: 46px;
+  overflow: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.voice-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voice-line b { color: var(--text); font-weight: 600; margin-right: 4px; }
+.voice-line.gemini b { color: var(--accent); }

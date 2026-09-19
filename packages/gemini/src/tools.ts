@@ -5,7 +5,7 @@
  *
  * Names must match runQuery() in packages/collector/src/analysis/queries.ts.
  */
-import { Type, type FunctionDeclaration } from "@google/genai";
+import { Behavior, Type, type FunctionDeclaration } from "@google/genai";
 
 const traceIdParam = {
   type: Type.STRING,
@@ -103,5 +103,100 @@ export const traceToolDeclarations: FunctionDeclaration[] = [
       properties: { traceId: traceIdParam },
       required: ["traceId"],
     },
+  },
+];
+
+/**
+ * Voice UI tools — declared to Gemini but EXECUTED in the dashboard, not the
+ * collector. They change what the user sees; every answer about the trace
+ * still comes from the deterministic query functions above.
+ *
+ * Gemini 3.8 Live function calls are async-only, so these are NON_BLOCKING —
+ * the model keeps talking while the UI applies the change.
+ */
+const entityIdParam = {
+  type: Type.STRING,
+  description: "Entity id, e.g. agent_researcher or tool_shell (from UI_CONTEXT)",
+};
+
+export const voiceUiToolDeclarations: FunctionDeclaration[] = [
+  {
+    name: "selectEvent",
+    behavior: Behavior.NON_BLOCKING,
+    description:
+      "Open/focus an event in the inspector. Use when the user says open/show/look at an event.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        eventId: { type: Type.STRING, description: "Event id to select" },
+      },
+      required: ["eventId"],
+    },
+  },
+  {
+    name: "selectAgent",
+    behavior: Behavior.NON_BLOCKING,
+    description:
+      "Focus an agent node — selects its most recent event. Use for 'focus on X', 'show me agent Y', or deictic references like 'that agent' resolved via UI_CONTEXT.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: { agentId: entityIdParam },
+      required: ["agentId"],
+    },
+  },
+  {
+    name: "highlightEvents",
+    behavior: Behavior.NON_BLOCKING,
+    description:
+      "Highlight a set of events' entities in the graph (dims everything else). Use for 'highlight that path', 'show these two', 'mark the chain'.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        eventIds: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+          description: "Event ids to highlight",
+        },
+      },
+      required: ["eventIds"],
+    },
+  },
+  {
+    name: "isolateEntity",
+    behavior: Behavior.NON_BLOCKING,
+    description:
+      "Show only an entity and its downstream subtree in the graph. Use for 'isolate this branch/subtree', 'just show me what X spawned'.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: { entityId: entityIdParam },
+      required: ["entityId"],
+    },
+  },
+  {
+    name: "setViewUntil",
+    behavior: Behavior.NON_BLOCKING,
+    description:
+      "Scrub the visible timeline: show only events up to a point. Provide eventId ('rewind to right there/that event') OR seconds from trace start.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        eventId: { type: Type.STRING },
+        seconds: { type: Type.NUMBER, description: "Seconds from trace start" },
+      },
+    },
+  },
+  {
+    name: "showFailures",
+    behavior: Behavior.NON_BLOCKING,
+    description:
+      "Highlight every event with failure status. Use for 'show me the failures/errors'.",
+    parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: "clearView",
+    behavior: Behavior.NON_BLOCKING,
+    description:
+      "Clear selection, highlights, isolation and timeline scrub — back to the full trace. Use for 'reset/clear the view'.",
+    parameters: { type: Type.OBJECT, properties: {} },
   },
 ];
