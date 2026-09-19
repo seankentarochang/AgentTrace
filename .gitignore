@@ -8,3 +8,4 @@ dist/
 data/
 *.jsonl
 dumps/
+demo/hook-dumps/

@@ -13,13 +13,15 @@ export function nextEventId(prefix = "evt"): string {
   return `${prefix}_${Date.now().toString(36)}_${(counter++).toString(36)}`;
 }
 
-/** Fire-and-forget by default; adapters must never break the host tool. */
+/** Fire-and-forget by default; adapters must never break the host tool.
+ * 3s cap so a wedged collector can never block a framework hook. */
 export async function emitEvent(event: TraceEvent): Promise<boolean> {
   try {
     const res = await fetch(`${COLLECTOR_URL}/v1/events`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ event }),
+      signal: AbortSignal.timeout(3000),
     });
     return res.ok;
   } catch {

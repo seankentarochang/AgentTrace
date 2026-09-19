@@ -4,17 +4,21 @@
  *
  *   coordinator --> proxy :8800 --> researcher :9101
  *   coordinator --> proxy :8801 --> reviewer  :9102
+ *
+ * run-demo calls runCoordinator() in-process (possibly repeatedly); this
+ * file also runs standalone via `npm run coordinator`.
  */
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { emit, eventId } from "./emit.js";
 
 const RESEARCHER_PROXY = process.env.RESEARCHER_PROXY_URL ?? "http://localhost:8800";
 const REVIEWER_PROXY = process.env.REVIEWER_PROXY_URL ?? "http://localhost:8801";
-const TRACE_ID = `trace_demo_${Date.now().toString(36)}`;
 
 const me = { id: "agent_coordinator", kind: "agent", name: "Coordinator" } as const;
 const provider = { adapter: "custom", adapterVersion: "0.1" } as const;
 
-function a2aRequest(taskId: string, text: string) {
+function a2aRequest(traceId: string, taskId: string, text: string) {
   return {
     jsonrpc: "2.0",
     id: eventId("req"),
@@ -23,7 +27,7 @@ function a2aRequest(taskId: string, text: string) {
       message: {
         messageId: eventId("msg"),
         taskId,
-        contextId: TRACE_ID,
+        contextId: traceId,
         role: "user",
         parts: [{ kind: "text", text }],
       },
@@ -54,11 +58,14 @@ async function send(
   return (await res.json()) as A2AResponse;
 }
 
-async function main() {
+/** Runs one coordinator fan-out. Returns the trace id it produced. */
+export async function runCoordinator(): Promise<string> {
+  const traceId = `trace_demo_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e4).toString(36)}`;
+
   await emit({
     schemaVersion: 1,
     eventId: eventId(),
-    traceId: TRACE_ID,
+    traceId,
     timestamp: new Date().toISOString(),
     source: me,
     category: "agent",
@@ -72,12 +79,12 @@ async function main() {
   const [research, review] = await Promise.all([
     send(
       RESEARCHER_PROXY,
-      a2aRequest("task_research", "Search the repo for recent changes to auth tests."),
+      a2aRequest(traceId, "task_research", "Search the repo for recent changes to auth tests."),
       { id: "agent_researcher", name: "Researcher" },
     ),
     send(
       REVIEWER_PROXY,
-      a2aRequest("task_review", "Re-run the auth test suite and report failures."),
+      a2aRequest(traceId, "task_review", "Re-run the auth test suite and report failures."),
       { id: "agent_reviewer", name: "Reviewer" },
     ),
   ]);
@@ -89,7 +96,7 @@ async function main() {
   await emit({
     schemaVersion: 1,
     eventId: eventId(),
-    traceId: TRACE_ID,
+    traceId,
     timestamp: new Date().toISOString(),
     source: me,
     category: "agent",
@@ -99,7 +106,11 @@ async function main() {
     provider,
   });
 
-  console.log(`\ntrace: ${TRACE_ID}`);
+  console.log(`\ntrace: ${traceId}`);
+  return traceId;
 }
 
-main();
+// Standalone entry (`npm run coordinator`) — skipped when imported by run-demo.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await runCoordinator();
+}

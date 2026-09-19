@@ -3,7 +3,7 @@
  * /v1/assistant route, which lazy-loads packages/gemini.
  */
 import { useState } from "react";
-import { askAssistant } from "../lib/api";
+import { askAssistant, type AssistantResponse } from "../lib/api";
 
 interface Props {
   traceId?: string;
@@ -11,15 +11,15 @@ interface Props {
 
 export function Assistant({ traceId }: Props) {
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<string>();
+  const [response, setResponse] = useState<AssistantResponse>();
   const [busy, setBusy] = useState(false);
 
   async function submit() {
     if (!question.trim() || !traceId) return;
     setBusy(true);
-    setAnswer(undefined);
+    setResponse(undefined);
     try {
-      setAnswer(await askAssistant(question, traceId));
+      setResponse(await askAssistant(question, traceId));
     } finally {
       setBusy(false);
     }
@@ -27,7 +27,16 @@ export function Assistant({ traceId }: Props) {
 
   return (
     <>
-      {answer !== undefined && <div className="assistant-answer">{answer}</div>}
+      {response !== undefined && (
+        <div className="assistant-answer">
+          {response.answer}
+          {response.functionsCalled.length > 0 && (
+            <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>
+              functions: {response.functionsCalled.join(", ")}
+            </div>
+          )}
+        </div>
+      )}
       <div className="assistant-bar">
         <span style={{ color: "var(--muted)" }}>Ask AgentTrace:</span>
         <input

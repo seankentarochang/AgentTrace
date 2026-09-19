@@ -142,10 +142,13 @@ app.post("/v1/assistant", async (request, reply) => {
     // runtime, and invisible to this package's typecheck.
     const geminiModule = "@agenttrace/gemini";
     const { ask } = (await import(geminiModule)) as {
-      ask: (question: string, traceId: string) => Promise<string>;
+      ask: (
+        question: string,
+        traceId: string,
+      ) => Promise<{ answer: string; functionsCalled?: string[] }>;
     };
-    const answer = await ask(question, traceId);
-    return { answer };
+    const result = await ask(question, traceId);
+    return { answer: result.answer, functionsCalled: result.functionsCalled ?? [] };
   } catch (err) {
     request.log.warn(err);
     return reply.code(501).send({ error: "assistant unavailable (Gemini not configured?)" });
