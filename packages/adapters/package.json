@@ -1,0 +1,23 @@
+{
+  "name": "@agenttrace/adapters",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "agenttrace-ingest": "./src/cli.ts"
+  },
+  "scripts": {
+    "dev:a2a": "tsx watch src/a2a/proxy.ts",
+    "ingest:codex": "tsx src/cli.ts codex",
+    "ingest:claude": "tsx src/cli.ts claude",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agenttrace/protocol": "*",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.3",
+    "typescript": "^5.6.3"
+  }
+}

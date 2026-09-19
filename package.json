@@ -1,0 +1,25 @@
+{
+  "name": "agenttrace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "demo/*"
+  ],
+  "scripts": {
+    "dev:collector": "npm run dev -w @agenttrace/collector",
+    "dev:dashboard": "npm run dev -w @agenttrace/dashboard",
+    "dev:a2a-proxy": "npm run dev:a2a -w @agenttrace/adapters",
+    "demo": "npm run start -w @agenttrace/demo",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "tsx": "^4.20.3"
+  }
+}
